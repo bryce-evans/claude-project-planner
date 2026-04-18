@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""
+Generate a live task flowchart and open it in the browser.
+
+Reads live status from BEADS (bd show --json) + task metadata from TASKS.md.
+Writes render/src/generated/tasks.ts, then optionally runs the Vite dev server.
+
+Usage (run from your project root):
+    python path/to/planning/render.py          # generate + open dev server
+    python path/to/planning/render.py --data   # generate data only, no server
+"""
+
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+TASKS_MD = Path("TASKS.md")
+BEADS_MAP_FILE = Path(".beads_map.json")
+RENDER_DIR = Path(__file__).parent.parent / "render"
+GENERATED_DIR = RENDER_DIR / "src" / "generated"
+DATA_FILE = GENERATED_DIR / "tasks.ts"
+
+
+# ---------------------------------------------------------------------------
+# Parse TASKS.md for static metadata
+# ---------------------------------------------------------------------------
+
+def _val(block: str, key: str) -> str:
+    m = re.search(rf"\*\*{re.escape(key)}:\*\*\s*(.+)", block)
+    if m:
+        return m.group(1).strip().rstrip("  ")
+    return "—"
+
+
+def load_tasks_md() -> list[dict]:
+    if not TASKS_MD.exists():
+        return []
+
+    content = TASKS_MD.read_text()
+    tasks = []
+
+    # Split on task card headers: ### T001 · title
+    blocks = re.split(r"(?=^### T\d+)", content, flags=re.MULTILINE)
+    for block in blocks:
+        m = re.match(r"### (T\d+) · (.+)", block.strip())
+        if not m:
+            continue
+        tid, name = m.group(1), m.group(2).strip()
+
+        human_m = re.search(r"> \*\*Human required:\*\*\s*(.+)", block)
+        human = human_m.group(1).strip() if human_m else None
+
+        dep_str = _val(block, "Depends on")
+        unlocks_str = _val(block, "Unlocks")
+
+        def parse_ids(s: str) -> list[str]:
+            if not s or s == "—":
+                return []
+            return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
+
+        tasks.append({
+            "id": tid,
+            "title": name,
+            "workstream": _val(block, "Workstream"),
+            "criticality": _val(block, "Criticality"),
+            "estimate": _val(block, "Estimate"),
+            "depends": parse_ids(dep_str),
+            "unlocks": parse_ids(unlocks_str),
+            "humanRequired": human,
+            "notes": _val(block, "Notes"),
+        })
+
+    return tasks
+
+
+# ---------------------------------------------------------------------------
+# Query BEADS for live status + timestamps
+# ---------------------------------------------------------------------------
+
+def _bd_json(*args: str) -> dict | None:
+    result = subprocess.run(
+        ["bd", *args, "--json"], capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def load_beads_state(id_map: dict[str, str]) -> dict[str, dict]:
+    """Return {T001: beads_data} for all tasks that have a BEADS ID."""
+    state: dict[str, dict] = {}
+    for tid, bd_id in id_map.items():
+        data = _bd_json("show", bd_id)
+        if data:
+            state[tid] = data
+    return state
+
+
+def _events_from_beads(data: dict) -> list[dict]:
+    events: list[dict] = []
+    if data.get("created_at"):
+        events.append({"type": "created", "at": data["created_at"]})
+    if data.get("started_at"):
+        events.append({"type": "started", "at": data["started_at"]})
+    status = data.get("status", "open")
+    if status == "in_review" and data.get("updated_at"):
+        events.append({"type": "in_review", "at": data["updated_at"]})
+    if data.get("closed_at"):
+        events.append({"type": "closed", "at": data["closed_at"]})
+    if status == "blocked" and data.get("updated_at"):
+        events.append({"type": "blocked", "at": data["updated_at"]})
+    return events
+
+
+# ---------------------------------------------------------------------------
+# Merge and write tasks.ts
+# ---------------------------------------------------------------------------
+
+def _ts_string(v: str | None) -> str:
+    if v is None:
+        return "null"
+    escaped = v.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    return f"`{escaped}`"
+
+
+def _ts_str_list(lst: list[str]) -> str:
+    return "[" + ", ".join(f'"{x}"' for x in lst) + "]"
+
+
+def _ts_events(events: list[dict]) -> str:
+    if not events:
+        return "[]"
+    items = [
+        f'{{ type: "{e["type"]}", at: "{e["at"]}" }}'
+        for e in events
+    ]
+    return "[\n    " + ",\n    ".join(items) + "\n  ]"
+
+
+def write_data_ts(tasks: list[dict], beads_state: dict[str, dict]) -> None:
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+
+    lines = [
+        "// Generated by render.py — do not edit manually",
+        f'// Updated: {now}',
+        "",
+        'import type { Task } from "../types"',
+        "",
+        f'export const generatedAt = "{now}"',
+        "",
+        "export const tasks: Task[] = [",
+    ]
+
+    for t in tasks:
+        bd = beads_state.get(t["id"], {})
+        status = bd.get("status", "open") if bd else "open"
+        assignee = bd.get("assignee") if bd else None
+        events = _events_from_beads(bd) if bd else []
+
+        lines.append("  {")
+        lines.append(f'    id: "{t["id"]}",')
+        lines.append(f'    beadsId: "{bd.get("id", "")}" ,')
+        lines.append(f'    title: {_ts_string(t["title"])},')
+        lines.append(f'    workstream: {_ts_string(t["workstream"])},')
+        lines.append(f'    criticality: "{t["criticality"]}",')
+        lines.append(f'    estimate: "{t["estimate"]}",')
+        lines.append(f'    status: "{status}",')
+        lines.append(f'    depends: {_ts_str_list(t["depends"])},')
+        lines.append(f'    unlocks: {_ts_str_list(t["unlocks"])},')
+        lines.append(f'    humanRequired: {_ts_string(t["humanRequired"])},')
+        lines.append(f'    assignee: {_ts_string(assignee)},')
+        lines.append(f'    events: {_ts_events(events)},')
+        lines.append("  },")
+
+    lines += ["]", ""]
+    DATA_FILE.write_text("\n".join(lines))
+    print(f"  Written to {DATA_FILE}")
+
+
+# ---------------------------------------------------------------------------
+# Dev server
+# ---------------------------------------------------------------------------
+
+def ensure_deps() -> bool:
+    node_modules = RENDER_DIR / "node_modules"
+    if not node_modules.exists():
+        print("  Installing render dependencies (npm install)...")
+        result = subprocess.run(["npm", "install"], cwd=RENDER_DIR)
+        return result.returncode == 0
+    return True
+
+
+def run_dev_server() -> None:
+    print(f"\n  Starting Vite dev server at http://localhost:5173\n")
+    subprocess.run(["npm", "run", "dev"], cwd=RENDER_DIR)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    data_only = "--data" in sys.argv
+
+    print("\n  Render — loading task data...\n")
+
+    tasks = load_tasks_md()
+    if not tasks:
+        print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
+        sys.exit(1)
+
+    print(f"  {len(tasks)} task(s) loaded from TASKS.md")
+
+    id_map: dict[str, str] = {}
+    if BEADS_MAP_FILE.exists():
+        id_map = json.loads(BEADS_MAP_FILE.read_text())
+        print(f"  {len(id_map)} BEADS ID(s) found — querying live status...")
+        beads_state = load_beads_state(id_map)
+        live = sum(1 for v in beads_state.values() if v)
+        print(f"  {live}/{len(id_map)} BEADS task(s) fetched\n")
+    else:
+        print("  No .beads_map.json — using static status from TASKS.md\n")
+        beads_state = {}
+
+    write_data_ts(tasks, beads_state)
+
+    if data_only:
+        print("\n  Done (data only). Open the render app manually.\n")
+        return
+
+    if not ensure_deps():
+        print("  ERROR: npm install failed. Check your Node.js installation.\n")
+        sys.exit(1)
+
+    run_dev_server()
+
+
+if __name__ == "__main__":
+    main()
