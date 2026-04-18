@@ -16,12 +16,32 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent / "planning"))
-
-import schema as S
 
 TASKS_MD = Path("TASKS.md")
+
+# Field definitions inlined from planning/task_fields.yaml so render.py has no
+# external dependencies beyond the Python standard library.
+# Each entry: (key, label, default)
+_FIELDS = [
+    ("workstream",  "Workstream",            ""),
+    ("criticality", "Criticality",           "P1"),
+    ("estimate",    "Estimate",              ""),
+    ("status",      "Status",               "todo"),
+    ("depends",     "Depends on",           ""),
+    ("unlocks",     "Unlocks",              ""),
+    ("human",       "Human required",       ""),
+    ("acceptance",  "Acceptance criteria",  ""),
+    ("verification","Verification steps",   ""),
+    ("tricky",      "Verification tricky spots", ""),
+    ("notes",       "Notes",                ""),
+    ("assignee",    "Assignee",             ""),
+]
+
+def _enforce_defaults(task: dict) -> dict:
+    for key, _, default in _FIELDS:
+        if task.get(key) is None:
+            task[key] = default
+    return task
 BEADS_MAP_FILE = Path(".beads_map.json")
 RENDER_DIR = Path(__file__).parent / "render"
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
@@ -47,8 +67,23 @@ def _parse_ids(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
 
 
+def _sync_from_plan_branch() -> bool:
+    """Pull TASKS.md from the plan git branch into the working directory if absent."""
+    if TASKS_MD.exists():
+        return True
+    r = subprocess.run(
+        ["git", "show", "plan:TASKS.md"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        TASKS_MD.write_text(r.stdout)
+        print(f"  Synced TASKS.md from plan branch.")
+        return True
+    return False
+
+
 def load_tasks_md() -> list[dict]:
-    if not TASKS_MD.exists():
+    if not TASKS_MD.exists() and not _sync_from_plan_branch():
         return []
 
     content = TASKS_MD.read_text()
@@ -63,17 +98,14 @@ def load_tasks_md() -> list[dict]:
 
         task: dict = {"id": tid, "title": name}
 
-        # Read every field from the schema by its label
-        for f in S.TASK_FIELDS:
-            if f.key in ("ID", "name"):
-                continue
-            raw = _val(block, f.label)
-            if f.key in ("depends", "unlocks"):
-                task[f.key] = _parse_ids(raw)
+        for key, label, _ in _FIELDS:
+            raw = _val(block, label)
+            if key in ("depends", "unlocks"):
+                task[key] = _parse_ids(raw)
             else:
-                task[f.key] = raw if raw != "—" else None
+                task[key] = raw if raw != "—" else None
 
-        tasks.append(S.enforce_defaults(task))
+        tasks.append(_enforce_defaults(task))
 
     return tasks
 
