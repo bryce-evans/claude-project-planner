@@ -328,10 +328,9 @@ def existing_repo_context() -> str | None:
     print("  (Blank line to finish)\n")
     while True:
         line = input("  > ")
-        if not line and answers:
+        if not line:
             break
-        if line:
-            answers.append(line)
+        answers.append(line)
 
     if answers:
         context += "\n\nUser clarifications:\n" + "\n".join(f"- {a}" for a in answers)
