@@ -146,14 +146,26 @@ def _call_api(prompt: str, max_tokens: int, print_output: bool) -> str:
 # Public interface
 # ---------------------------------------------------------------------------
 
+def call_claude_cli(
+    prompt: str,
+    max_tokens: int = 1024,
+    print_output: bool = True,
+) -> str:
+    """
+    Call Claude via `claude -p` (Claude Code CLI). No ME.md, no config.
+    Use this during planning, before ME.md exists.
+    """
+    return _call_cli(prompt, print_output)
+
+
 def call_claude(
     prompt: str,
     max_tokens: int = 1024,
     print_output: bool = True,
 ) -> str:
     """
-    Call Claude using the configured backend.
-    Returns the full response text.
+    Call Claude using the backend configured in ME.md.
+    Use this during start/execute phase, after ME.md is set up.
     """
     runner = get_runner()
     if runner == "claude-code":

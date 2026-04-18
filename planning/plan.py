@@ -28,7 +28,7 @@ from schema import (
     enforce_defaults, validate_all,
 )
 from git_plan import ensure_plan_branch, commit_to_plan, ensure_gitignore
-from claude_runner import call_claude, read_runner, prompt_runner
+from claude_runner import call_claude_cli as call_claude
 
 
 PROJECT_MD = Path("PROJECT.md")
@@ -1280,13 +1280,6 @@ def main() -> None:
     try:
         ensure_gitignore()
         ensure_plan_branch()
-
-        # Configure Claude runner once before any AI calls are made
-        if not read_runner():
-            print("\n" + hr("="))
-            print("  Setup: How should Claude be invoked?")
-            print(hr("="))
-            prompt_runner()
 
         project_type = select_project_type()
         repo_context = existing_repo_context()
