@@ -87,6 +87,36 @@ def get_runner() -> str:
     return read_runner() or prompt_runner()
 
 
+# Session-only runner for the planning phase (not saved to ME.md)
+_plan_runner: str | None = None
+
+
+def get_plan_runner() -> str:
+    """
+    Return the runner for the planning phase.
+    Asks once per session with a planning-specific prompt; result is
+    kept in memory only — ME.md is not touched during planning.
+    """
+    global _plan_runner
+    if _plan_runner:
+        return _plan_runner
+
+    print("\n  How would you like to use Claude for planning?\n")
+    print("  1. Claude Code  (recommended) — `claude -p`, uses your Claude Code login")
+    print("  2. API key      — Anthropic SDK, reads ANTHROPIC_API_KEY from environment\n")
+
+    if not _cli_available():
+        print("  (claude CLI not found — defaulting to api-key)\n")
+        _plan_runner = "api-key"
+    else:
+        choice = input("  Choice [1]: ").strip() or "1"
+        _plan_runner = "api-key" if choice == "2" else "claude-code"
+
+    label = "`claude -p`" if _plan_runner == "claude-code" else "API key"
+    print(f"  Using {label} for planning.\n")
+    return _plan_runner
+
+
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
@@ -152,10 +182,13 @@ def call_claude_cli(
     print_output: bool = True,
 ) -> str:
     """
-    Call Claude via `claude -p` (Claude Code CLI). No ME.md, no config.
-    Use this during planning, before ME.md exists.
+    Call Claude for the planning phase. Asks once how to invoke Claude
+    (session-only, no ME.md). Use this before ME.md exists.
     """
-    return _call_cli(prompt, print_output)
+    runner = get_plan_runner()
+    if runner == "claude-code":
+        return _call_cli(prompt, print_output)
+    return _call_api(prompt, max_tokens, print_output)
 
 
 def call_claude(
