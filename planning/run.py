@@ -57,6 +57,25 @@ def _ensure_deps() -> None:
     subprocess.run(cmd, check=True)
 
 # ---------------------------------------------------------------------------
+# API key check
+# ---------------------------------------------------------------------------
+
+def _check_api_key() -> None:
+    import os
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if key:
+        return
+    print("\n  ANTHROPIC_API_KEY is not set.\n")
+    print("  Set it in your shell before running:")
+    print("    export ANTHROPIC_API_KEY=sk-ant-...")
+    print()
+    print("  Or add it permanently to ~/.zshrc (or ~/.bashrc):")
+    print("    echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc")
+    print("    source ~/.zshrc\n")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # New vs existing detection
 # ---------------------------------------------------------------------------
 
@@ -267,6 +286,7 @@ def main() -> None:
     print(sep)
 
     _ensure_deps()
+    _check_api_key()
 
     stages = build_stages(target, force_from)
     stage_ids = [s.id for s in stages]
