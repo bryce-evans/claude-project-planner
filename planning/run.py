@@ -215,7 +215,7 @@ def build_stages(target: Path, force_from: str | None) -> list[Stage]:
 
 def _print_stages(stages: list[Stage], target: Path, current_id: str | None) -> None:
     print(f"\n  Project: {target}")
-    print(f"  Mode:    {'new repo' if _STAGE_INIT in stages else 'existing repo'}\n")
+    print(f"  Mode:    {'new repo' if is_new_repo(target) else 'existing repo'}\n")
     for stage in stages:
         done = stage.check(target)
         if done:
