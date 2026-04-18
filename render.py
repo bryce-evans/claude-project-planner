@@ -54,8 +54,9 @@ DATA_FILE = GENERATED_DIR / "tasks.ts"
 
 def _val(block: str, label: str) -> str:
     """Extract a field value by its label from a task card block."""
-    # Matches both "**Label:** value" and "> **Label:** value" (human required)
-    m = re.search(rf"(?:> )?\*\*{re.escape(label)}:\*\*\s*(.+)", block)
+    # Use [ \t]* (not \s*) so we never consume a newline into the next field.
+    # Matches both "**Label:** value" and "> **Label:** value" (human required blockquote).
+    m = re.search(rf"(?:> )?\*\*{re.escape(label)}:\*\*[ \t]*(.+)", block)
     if m:
         return m.group(1).strip().rstrip("  ")
     return "—"
