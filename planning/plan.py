@@ -21,6 +21,8 @@ import json
 import re
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from schema import (
@@ -1113,6 +1115,45 @@ def write_tasks_md(tasks: list[dict]) -> None:
     commit_to_plan([TASKS_MD], "planning: update TASKS.md")
 
 
+def _timed_call(fn, label: str) -> str:
+    """
+    Run fn() in a background thread while showing a live elapsed timer so the
+    user can see the process is still running. Returns fn()'s return value.
+    """
+    result: list = [None]
+    error: list = [None]
+    done = threading.Event()
+
+    def _worker():
+        try:
+            result[0] = fn()
+        except Exception as e:
+            error[0] = e
+        finally:
+            done.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    start = time.time()
+    i = 0
+    while not done.wait(0.1):
+        elapsed = int(time.time() - start)
+        m, s = divmod(elapsed, 60)
+        ts = f"{m}:{s:02d}" if m else f"{s}s"
+        print(f"\r  {spinners[i % len(spinners)]}  {label}  [{ts}]   ", end="", flush=True)
+        i += 1
+
+    elapsed = int(time.time() - start)
+    m, s = divmod(elapsed, 60)
+    ts = f"{m}:{s:02d}" if m else f"{s}s"
+    print(f"\r  ✓  {label}  [{ts}]                    ")
+
+    if error[0]:
+        raise error[0]
+    return result[0]
+
+
 def generate_task_manifest(
     sections: dict[str, str], components: list[dict], ws_list: list[dict],
     repo_context: str | None = None,
@@ -1120,15 +1161,20 @@ def generate_task_manifest(
     print("\n" + hr("="))
     print("  Step 6: Task Manifest")
     print(hr("="))
-    print("\n  Building full task graph with dependencies and human requirements...\n")
+    print("\n  Building full task graph with dependencies and human requirements...")
+    print("  (Claude reasons across all workstreams — typically takes 1–3 minutes)\n")
 
     summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
     ws_tasks = _ws_tasks_text(ws_list)
 
-    raw = call_claude(
-        TASK_MANIFEST_PROMPT.format(summary=summary, stack=stack, ws_tasks=ws_tasks),
-        max_tokens=4096,
+    raw = _timed_call(
+        lambda: call_claude(
+            TASK_MANIFEST_PROMPT.format(summary=summary, stack=stack, ws_tasks=ws_tasks),
+            max_tokens=4096,
+            print_output=False,
+        ),
+        "Generating task manifest",
     )
 
     tasks = _parse_task_blocks(raw)
