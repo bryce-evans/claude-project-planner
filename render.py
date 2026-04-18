@@ -44,7 +44,7 @@ def _enforce_defaults(task: dict) -> dict:
             task[key] = default
     return task
 BEADS_MAP_FILE = Path(".beads_map.json")
-RENDER_DIR = Path(__file__).parent / "render"
+RENDER_DIR = Path.cwd() / "render"
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
 
@@ -295,6 +295,11 @@ def main() -> None:
     data_only = "--data" in sys.argv
 
     print("\n  Render — loading task data...\n")
+
+    if not RENDER_DIR.exists():
+        print(f"  ERROR: render/ not found at {RENDER_DIR}")
+        print(f"  Run setup.py first to copy the render app into this project.\n")
+        sys.exit(1)
 
     tasks = load_tasks_md()
     if not tasks:

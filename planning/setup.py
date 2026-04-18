@@ -16,6 +16,7 @@ _sys.path.insert(0, str(Path(__file__).parent))
 from git_plan import ensure_plan_branch, ensure_gitignore
 
 BOILERPLATE_DIR = Path(__file__).parent.parent / "boilerplate"
+RENDER_SRC_DIR = Path(__file__).parent.parent / "render"
 
 # Files that get special merge handling instead of copy/overwrite
 _MERGE_GITIGNORE = ".gitignore"
@@ -106,6 +107,17 @@ def main() -> None:
     if skipped:
         print(f" Kept existing: {', '.join(skipped)}.", end="")
     print("\n")
+
+    # Copy render app (task visualiser) — skip node_modules, dist, and generated data
+    render_dst = target / "render"
+    if RENDER_SRC_DIR.exists() and not render_dst.exists():
+        ignore = shutil.ignore_patterns("node_modules", "dist", "generated")
+        shutil.copytree(RENDER_SRC_DIR, render_dst, ignore=ignore)
+        print(f"  + render/  (task visualiser)")
+    elif render_dst.exists():
+        print(f"  ~ render/  (kept existing)")
+    else:
+        print(f"  ! render/  (source not found at {RENDER_SRC_DIR} — skipping)")
 
     # Git setup — must run with cwd=target so git operates on the right repo
     import os

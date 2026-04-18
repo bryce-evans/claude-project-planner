@@ -21,6 +21,11 @@ dist/
 .next/
 .nuxt/
 
+# Render app (generated data — source files are committed)
+render/node_modules/
+render/dist/
+render/src/generated/
+
 # Environment
 .env
 .env.local
