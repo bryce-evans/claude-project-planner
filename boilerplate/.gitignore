@@ -1,0 +1,36 @@
+# Personal context — not committed
+ME.md
+
+# BEADS — local embedded Dolt database (never committed)
+.beads/
+# BEADS task→ID mapping (local only)
+.beads_map.json
+# BEADS issue export (tracked on plan branch only, not workstream/main)
+issues.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.next/
+.nuxt/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp

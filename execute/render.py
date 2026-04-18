@@ -3,11 +3,11 @@
 Generate a live task flowchart and open it in the browser.
 
 Reads live status from BEADS (bd show --json) + task metadata from TASKS.md.
-Writes render/src/generated/tasks.ts, then optionally runs the Vite dev server.
+Writes execute/render/src/generated/tasks.ts, then optionally runs the Vite dev server.
 
 Usage (run from your project root):
-    python path/to/planning/render.py          # generate + open dev server
-    python path/to/planning/render.py --data   # generate data only, no server
+    python path/to/execute/render.py          # generate + open dev server
+    python path/to/execute/render.py --data   # generate data only, no server
 """
 
 import json
@@ -16,10 +16,14 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent.parent / "planning"))
+
+import schema as S
 
 TASKS_MD = Path("TASKS.md")
 BEADS_MAP_FILE = Path(".beads_map.json")
-RENDER_DIR = Path(__file__).parent.parent / "render"
+RENDER_DIR = Path(__file__).parent / "render"
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
 
@@ -28,11 +32,19 @@ DATA_FILE = GENERATED_DIR / "tasks.ts"
 # Parse TASKS.md for static metadata
 # ---------------------------------------------------------------------------
 
-def _val(block: str, key: str) -> str:
-    m = re.search(rf"\*\*{re.escape(key)}:\*\*\s*(.+)", block)
+def _val(block: str, label: str) -> str:
+    """Extract a field value by its label from a task card block."""
+    # Matches both "**Label:** value" and "> **Label:** value" (human required)
+    m = re.search(rf"(?:> )?\*\*{re.escape(label)}:\*\*\s*(.+)", block)
     if m:
         return m.group(1).strip().rstrip("  ")
     return "—"
+
+
+def _parse_ids(s: str) -> list[str]:
+    if not s or s == "—":
+        return []
+    return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
 
 
 def load_tasks_md() -> list[dict]:
@@ -42,7 +54,6 @@ def load_tasks_md() -> list[dict]:
     content = TASKS_MD.read_text()
     tasks = []
 
-    # Split on task card headers: ### T001 · title
     blocks = re.split(r"(?=^### T\d+)", content, flags=re.MULTILINE)
     for block in blocks:
         m = re.match(r"### (T\d+) · (.+)", block.strip())
@@ -50,28 +61,19 @@ def load_tasks_md() -> list[dict]:
             continue
         tid, name = m.group(1), m.group(2).strip()
 
-        human_m = re.search(r"> \*\*Human required:\*\*\s*(.+)", block)
-        human = human_m.group(1).strip() if human_m else None
+        task: dict = {"id": tid, "title": name}
 
-        dep_str = _val(block, "Depends on")
-        unlocks_str = _val(block, "Unlocks")
+        # Read every field from the schema by its label
+        for f in S.TASK_FIELDS:
+            if f.key in ("ID", "name"):
+                continue
+            raw = _val(block, f.label)
+            if f.key in ("depends", "unlocks"):
+                task[f.key] = _parse_ids(raw)
+            else:
+                task[f.key] = raw if raw != "—" else None
 
-        def parse_ids(s: str) -> list[str]:
-            if not s or s == "—":
-                return []
-            return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
-
-        tasks.append({
-            "id": tid,
-            "title": name,
-            "workstream": _val(block, "Workstream"),
-            "criticality": _val(block, "Criticality"),
-            "estimate": _val(block, "Estimate"),
-            "depends": parse_ids(dep_str),
-            "unlocks": parse_ids(unlocks_str),
-            "humanRequired": human,
-            "notes": _val(block, "Notes"),
-        })
+        tasks.append(S.enforce_defaults(task))
 
     return tasks
 
@@ -160,21 +162,30 @@ def write_data_ts(tasks: list[dict], beads_state: dict[str, dict]) -> None:
 
     for t in tasks:
         bd = beads_state.get(t["id"], {})
-        status = bd.get("status", "open") if bd else "open"
-        assignee = bd.get("assignee") if bd else None
+        # BEADS status takes precedence; fall back to TASKS.md status
+        status = bd.get("status", t.get("status") or "open") if bd else (t.get("status") or "open")
+        assignee = bd.get("assignee") or t.get("assignee") or None
         events = _events_from_beads(bd) if bd else []
+
+        # Normalise list fields
+        depends = t.get("depends") or []
+        unlocks = t.get("unlocks") or []
+        if isinstance(depends, str):
+            depends = [x.strip() for x in depends.split(",") if x.strip()]
+        if isinstance(unlocks, str):
+            unlocks = [x.strip() for x in unlocks.split(",") if x.strip()]
 
         lines.append("  {")
         lines.append(f'    id: "{t["id"]}",')
-        lines.append(f'    beadsId: "{bd.get("id", "")}" ,')
-        lines.append(f'    title: {_ts_string(t["title"])},')
-        lines.append(f'    workstream: {_ts_string(t["workstream"])},')
-        lines.append(f'    criticality: "{t["criticality"]}",')
-        lines.append(f'    estimate: "{t["estimate"]}",')
+        lines.append(f'    beadsId: "{bd.get("id", "")}",')
+        lines.append(f'    title: {_ts_string(t.get("title") or t.get("name"))},')
+        lines.append(f'    workstream: {_ts_string(t.get("workstream"))},')
+        lines.append(f'    criticality: "{t.get("criticality", "P1")}",')
+        lines.append(f'    estimate: "{t.get("estimate", "—")}",')
         lines.append(f'    status: "{status}",')
-        lines.append(f'    depends: {_ts_str_list(t["depends"])},')
-        lines.append(f'    unlocks: {_ts_str_list(t["unlocks"])},')
-        lines.append(f'    humanRequired: {_ts_string(t["humanRequired"])},')
+        lines.append(f'    depends: {_ts_str_list(depends)},')
+        lines.append(f'    unlocks: {_ts_str_list(unlocks)},')
+        lines.append(f'    humanRequired: {_ts_string(t.get("human"))},')
         lines.append(f'    assignee: {_ts_string(assignee)},')
         lines.append(f'    events: {_ts_events(events)},')
         lines.append("  },")

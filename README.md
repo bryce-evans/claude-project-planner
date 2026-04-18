@@ -1,71 +1,160 @@
 # Claude Project Planner
 
-A toolkit for spinning up well-structured projects fast and keeping execution visible.
+A toolkit for structured project setup, AI-assisted planning, and parallel agent execution.
+The goal: eliminate ambiguity so human and AI agents can work faster, in parallel, with less
+coordination overhead and more verifiable output.
+
+---
+
+## Philosophy
+
+Most AI agent failures come from missing context, not missing capability. This toolkit solves
+that by front-loading definition: every task has an owner, explicit dependencies, acceptance
+criteria, and a verification guide before anyone starts working. The render view makes
+execution state visible to the whole team in real time.
+
+---
 
 ## Components
 
-| Component | Status | Description |
-|-----------|--------|-------------|
-| **boilerplate** | done | Template files to copy into a new project |
-| **planning** | in progress | Interactive CLI: define your project, pick a tech stack, generate ARCHITECTURE.md |
-| **render** | planned | Live browser flowchart of tasks, workstreams, and agent progress |
+| Component | Directory | Status |
+|-----------|-----------|--------|
+| **boilerplate** | `boilerplate/` | Markdown templates for every project |
+| **planning** | `planning/` | Interactive CLI: project → plan → tasks |
+| **execute** | `execute/` | Live browser flowchart of task execution |
 
-## Quickstart
+---
+
+## Full Workflow
+
+### Phase 1 — Setup (one time per project)
+
+**1. Copy boilerplate into your new project**
 
 ```sh
 PLANNER=path/to/claude-project-planner
 pip install -r $PLANNER/planning/requirements.txt
-```
 
-### 1. Setup — copy boilerplate
-
-```sh
 cd /your/new/project
 python $PLANNER/planning/setup.py
 ```
 
-Copies `PROJECT.md`, `PLAN.md`, `ARCHITECTURE.md`, `STYLE.md`, `CLAUDE.md`, `WORKSTREAM.md` into your project root.
+Copies into your project root:
+- `PROJECT.md` — high-level project definition
+- `PLAN.md` — workstream map and task summary
+- `TASKS.md` — full task manifest with dependency graph
+- `ARCHITECTURE.md` — component map and tech stack
+- `STYLE.md` — linting and code style rules
+- `CLAUDE.md` — Claude's reading list (loaded before every action)
+- `WORKSTREAM.md` — active role and responsibilities (updated per session)
 
-### 2. Identify yourself
+---
 
-```sh
-python $PLANNER/planning/start.py
-```
+### Phase 2 — Planning (`plan.py`)
 
-Asks for your name, whether you're a human or AI agent, and which workstream you're owning. Writes `WORKSTREAM.md` — Claude reads this before every action so it knows its role and scope.
-
-Re-run this at the start of each session, or whenever ownership changes.
-
-### 3. Plan the project
+Run once to define the project. Re-run to update any section.
 
 ```sh
 python $PLANNER/planning/plan.py
 ```
 
-Walks you through:
-1. Filling in `PROJECT.md` (motivation, goals, success criteria, etc.)
-2. Tech stack recommendations — confirm or override per component
-3. Re-iteration — gaps, alternatives, clarifying questions
-4. Workstream definition — count, codenames, scope
-5. Task breakdown per workstream → writes `PLAN.md` and `ARCHITECTURE.md`
+The script walks through **8 steps**:
 
-### 4. Start working
+| Step | What happens |
+|------|-------------|
+| **0. Existing repo context** | Detects git history. If building on existing code, Claude reads the repo structure, recent commits, and key config files — then surfaces questions to answer before planning |
+| **1. Project definition** | Walks through `PROJECT.md`: motivation, goals, success criteria, priorities, resources, final result. Saves after each answer — crash-safe |
+| **2. Tech stack** | Claude identifies components (frontend, API, DB, auth, deployment, etc.) and recommends a specific technology for each with rationale. Flags opinionated choices with alternatives |
+| **3. Confirm tech stack** | Review each recommendation — accept or override per component |
+| **4. Generate `ARCHITECTURE.md`** | Claude writes component boundaries, directory layout, and interfaces from the agreed stack |
+| **5. Re-iterate** | Claude reviews the full plan and surfaces: gaps (things not considered), alternatives (trade-offs worth weighing), and clarifications (questions about your reasoning). Each can be skipped or answered — responses are saved to `PROJECT.md` |
+| **6. Workstreams** | Specify a count (e.g. 3 for a 3-person team) or let Claude recommend. Claude names each workstream with a memorable codename (`Keymaster` for auth, `Dazzler` for frontend, `Bedrock` for DB). Scope is defined per workstream. Tasks are broken out per stream |
+| **7. Task manifest → `TASKS.md`** | Claude generates the full task graph across all workstreams, with cross-workstream dependencies. Every task has all 14 fields filled (see schema below). Required fields are validated — blank ones are flagged for your input |
+| **8. Push to BEADS** | (Optional) Pushes all tasks to [BEADS](https://github.com/gastownhall/beads) via `bd create` and links dependencies with `bd dep add`. Writes `.beads_map.json` for the execute step |
 
-- Pick a task from your workstream in `PLAN.md`
-- Update **Current Task** in `WORKSTREAM.md`
-- Mark the task `in-progress`, then `done` when finished
+---
 
-## Boilerplate files
+### Phase 3 — Session start (`start.py`)
 
-| File | Purpose |
-|------|---------|
-| `PROJECT.md` | High-level project definition (motivation, goals, success criteria) |
-| `PLAN.md` | Task list organized by workstream, with priorities and blockers |
-| `ARCHITECTURE.md` | Component map, tech stack, directory layout, interfaces |
-| `STYLE.md` | Linting tools, code style rules |
-| `CLAUDE.md` | Instructions for Claude — points to the above docs |
+Run at the start of every session — for humans and AI agents alike.
+
+```sh
+python $PLANNER/planning/start.py
+```
+
+- Enter your name and type (human or AI agent)
+- Pick a workstream from `PLAN.md`
+- Claude drafts your specific responsibilities based on workstream scope
+- Writes `WORKSTREAM.md` — the first thing `CLAUDE.md` tells Claude to read
+
+**Re-run whenever ownership changes or a new session begins.**
+`WORKSTREAM.md` includes a "Current Task" field — update it as you work.
+
+---
+
+### Phase 4 — Execution
+
+Pick tasks from `TASKS.md`. Every task has:
+
+| Field | Purpose |
+|-------|---------|
+| **Workstream** | Who owns it |
+| **Criticality** | P0 / P1 / P2 — what's blocking vs nice-to-have |
+| **Depends on / Unlocks** | DAG of task dependencies |
+| **Human required** | Explicit callout for anything needing a human (API keys, billing, OAuth consent) |
+| **Acceptance criteria** | Observable, specific definition of done |
+| **Verification steps** | Concrete commands/flows to confirm it works — written so a bot can follow them |
+| **Tricky spots** | What's subtle or commonly missed when verifying — guards against false positives |
+| **Estimate** | Rough time budget |
+| **Notes** | Sequencing gotchas, key decisions |
+| **Assignee / Status** | Tracked per task |
+
+Start with all P0 tasks. Update status in BEADS as you go (`bd update <id> --claim`, `bd close <id>`).
+
+---
+
+### Phase 5 — Render (`execute/render.py`)
+
+Live browser flowchart of the full task graph.
+
+```sh
+python $PLANNER/execute/render.py          # generate + open dev server at localhost:5173
+python $PLANNER/execute/render.py --data   # generate data file only, no server
+```
+
+- Reads live task status from BEADS (`bd show --json`)
+- Falls back to `TASKS.md` status if BEADS is not set up
+- Writes `execute/render/src/generated/tasks.ts` and starts the Vite dev server
+- Shows: status by color, timing (started 2h ago, in review since 4h ago), assignee, human-required callouts, minimap, aggregate stats
+
+**First run:** `npm install` runs automatically inside `execute/render/`.
+
+---
+
+## Task Field Schema
+
+Defined in `planning/task_fields.yaml`. All 14 fields must be present on every task — `""` is valid for optional fields, `None` is not.
+
+Required fields (blank = validation error, user is prompted to fill): `ID`, `workstream`, `name`, `criticality`, `estimate`, `acceptance`, `verification`, `tricky`
+
+---
+
+## File Reference
+
+| File | Who writes it | Who reads it |
+|------|--------------|-------------|
+| `PROJECT.md` | `plan.py` + user | `plan.py` (resuming), Claude |
+| `ARCHITECTURE.md` | `plan.py` | Claude (via CLAUDE.md) |
+| `PLAN.md` | `plan.py` | Claude, team |
+| `TASKS.md` | `plan.py` | `start.py`, `execute/render.py`, Claude |
+| `WORKSTREAM.md` | `start.py` | Claude (first thing, every session) |
+| `CLAUDE.md` | boilerplate | Claude (auto-loaded) |
+| `.beads_map.json` | `plan.py` | `execute/render.py` |
+| `execute/render/src/generated/tasks.ts` | `execute/render.py` | React app |
+
+---
 
 ## Docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — how this repo itself is structured
-- [STYLE.md](STYLE.md) — code style and linting (TBD once stack is chosen)
+- [planning/task_fields.yaml](planning/task_fields.yaml) — canonical task field schema

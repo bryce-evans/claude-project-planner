@@ -1,8 +1,10 @@
 # Claude Instructions
 
-Before writing any code or taking any action in this repo, read **all** of the following:
+Before writing any code or taking any action in this repo, read **all** of the following.
+If any file is missing, stop and tell the user which one is absent and how to regenerate it.
 
-- [WORKSTREAM.md](WORKSTREAM.md) — your current role, workstream, and responsibilities. This defines what you own and what is out of scope for you.
+- [ME.md](ME.md) — who you are: expertise, workflow style, current constraints. If this file is missing, stop and ask the user to run `python path/to/planning/start.py` to regenerate it.
+- [WORKSTREAM.md](WORKSTREAM.md) — your current role, workstream, and responsibilities. If missing, same: ask user to run `start.py`.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component boundaries, APIs, interfaces, and scope
 - [STYLE.md](STYLE.md) — linting, code style rules, and how to enforce them
 - [PLAN.md](PLAN.md) — workstreams, scope, and status

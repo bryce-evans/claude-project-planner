@@ -24,6 +24,11 @@ import sys
 from pathlib import Path
 
 import anthropic
+from schema import (
+    TASK_FIELDS, field_descriptions, prompt_example,
+    enforce_defaults, validate_all,
+)
+from git_plan import ensure_plan_branch, commit_to_plan, ensure_gitignore
 
 MODEL = "claude-sonnet-4-6"
 
@@ -96,6 +101,7 @@ def save_project_md(sections: dict[str, str]) -> None:
         lines.append(f"## {title}\n")
         lines.append((sections.get(key) or "_TODO_") + "\n\n")
     PROJECT_MD.write_text("\n".join(lines))
+    commit_to_plan([PROJECT_MD], "planning: update PROJECT.md")
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +145,148 @@ def prompt_section(key: str, title: str, question: str, existing: str | None) ->
 
 
 # ---------------------------------------------------------------------------
+# Phase 0 — existing repo context (runs before project definition)
+# ---------------------------------------------------------------------------
+
+REPO_CONTEXT_PROMPT = """\
+You are a senior software architect reviewing an existing codebase to inform project planning.
+
+The user is running a planning session on top of an existing repository.
+
+Git log (recent commits):
+{git_log}
+
+Directory structure:
+{tree}
+
+Key file contents:
+{file_contents}
+
+Summarise what you observe in 3-5 bullet points:
+- What the codebase does (inferred from structure and commits)
+- Tech stack already in use
+- Any patterns, conventions, or constraints a planner should know about
+- Potential conflicts or considerations for new work being planned on top of this
+
+Then list up to 5 specific questions the user should answer before planning begins, \
+to make sure the plan fits the existing code. Format questions as a numbered list.
+
+Keep the whole response under 400 words.
+"""
+
+_IGNORE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
+    ".next", ".nuxt", "coverage", ".pytest_cache", ".mypy_cache",
+}
+_KEY_FILES = {
+    "package.json", "pyproject.toml", "requirements.txt", "Cargo.toml",
+    "go.mod", "Makefile", "docker-compose.yml", "README.md", "ARCHITECTURE.md",
+}
+
+
+def _git_log() -> str:
+    r = subprocess.run(
+        ["git", "log", "--oneline", "-20"], capture_output=True, text=True
+    )
+    return r.stdout.strip() if r.returncode == 0 else "(no git history)"
+
+
+def _dir_tree(max_depth: int = 3) -> str:
+    lines: list[str] = []
+
+    def walk(path: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name))
+        except PermissionError:
+            return
+        for entry in entries:
+            if entry.name in _IGNORE_DIRS or entry.name.startswith("."):
+                continue
+            indent = "  " * depth
+            lines.append(f"{indent}{entry.name}{'/' if entry.is_dir() else ''}")
+            if entry.is_dir():
+                walk(entry, depth + 1)
+
+    walk(Path("."), 0)
+    return "\n".join(lines[:120])  # cap at 120 lines
+
+
+def _read_key_files() -> str:
+    parts: list[str] = []
+    for name in _KEY_FILES:
+        p = Path(name)
+        if p.exists():
+            content = p.read_text()[:1500]
+            parts.append(f"--- {name} ---\n{content}")
+    return "\n\n".join(parts) or "(none found)"
+
+
+def existing_repo_context() -> str | None:
+    """
+    Detect if we're in an existing repo with history.
+    If yes, analyse it with Claude and return a context summary string.
+    Returns None if the user skips or there's no meaningful existing code.
+    """
+    git_log = _git_log()
+    is_existing = git_log != "(no git history)" and len(git_log.splitlines()) > 2
+
+    print("\n" + hr("="))
+    print("  Step 0: Existing Repo Context")
+    print(hr("="))
+
+    if is_existing:
+        print(f"\n  Detected existing git history ({len(git_log.splitlines())} commits).")
+    else:
+        print("\n  No significant git history found.")
+
+    print("  Is this plan for an existing codebase? [Y/n]: ", end="")
+    ans = input().strip().lower()
+    if ans == "n":
+        print("  Starting fresh — skipping repo context.\n")
+        return None
+
+    print("\n  Analysing existing codebase...\n")
+
+    client = anthropic.Anthropic()
+    prompt = REPO_CONTEXT_PROMPT.format(
+        git_log=git_log or "(empty)",
+        tree=_dir_tree(),
+        file_contents=_read_key_files(),
+    )
+
+    context = ""
+    with client.messages.stream(
+        model=MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        for text in stream.text_stream:
+            print(text, end="", flush=True)
+            context += text
+
+    print("\n")
+
+    # Let user answer any questions Claude raised before continuing
+    print("  Answer any of the questions above that are relevant,")
+    print("  or press Enter to continue. (These will be added to project context.)\n")
+    answers: list[str] = []
+    print("  (Blank line to finish)\n")
+    while True:
+        line = input("  > ")
+        if not line and answers:
+            break
+        if line:
+            answers.append(line)
+
+    if answers:
+        context += "\n\nUser clarifications:\n" + "\n".join(f"- {a}" for a in answers)
+
+    return context
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 — collect project definition
 # ---------------------------------------------------------------------------
 
@@ -168,11 +316,14 @@ def collect_project_info() -> dict[str, str]:
 # Phase 2 — tech stack recommendations
 # ---------------------------------------------------------------------------
 
-def _project_summary(sections: dict[str, str]) -> str:
-    return "\n".join(
+def _project_summary(sections: dict[str, str], repo_context: str | None = None) -> str:
+    lines = [
         f"**{title}:** {sections.get(key, 'N/A')}"
         for key, title, _ in SECTIONS
-    )
+    ]
+    if repo_context:
+        lines.append(f"\n**Existing codebase context:**\n{repo_context}")
+    return "\n".join(lines)
 
 
 TECH_STACK_PROMPT = """\
@@ -201,9 +352,9 @@ Format exactly like this (one component per line, no extra text before or after)
 """
 
 
-def stream_recommendations(sections: dict[str, str]) -> str:
+def stream_recommendations(sections: dict[str, str], repo_context: str | None = None) -> str:
     client = anthropic.Anthropic()
-    summary = _project_summary(sections)
+    summary = _project_summary(sections, repo_context)
 
     print("\n" + hr("="))
     print("  Step 2: Tech Stack Recommendations")
@@ -297,9 +448,9 @@ Rules:
 """
 
 
-def write_architecture(sections: dict[str, str], components: list[dict]) -> None:
+def write_architecture(sections: dict[str, str], components: list[dict], repo_context: str | None = None) -> None:
     client = anthropic.Anthropic()
-    summary = _project_summary(sections)
+    summary = _project_summary(sections, repo_context)
     stack = "\n".join(
         f"- **{c['name']}**: {c['tech']} — {c['rationale']}" for c in components
     )
@@ -324,6 +475,7 @@ def write_architecture(sections: dict[str, str], components: list[dict]) -> None
 
     ARCHITECTURE_MD.write_text(content)
     print(f"\n\n  Written to {ARCHITECTURE_MD}\n")
+    commit_to_plan([ARCHITECTURE_MD], "planning: update ARCHITECTURE.md")
 
 
 # ---------------------------------------------------------------------------
@@ -569,10 +721,11 @@ def _get_workstream_count(sections: dict[str, str], components: list[dict]) -> t
 
 
 def recommend_workstreams(
-    sections: dict[str, str], components: list[dict], count_instruction: str
+    sections: dict[str, str], components: list[dict], count_instruction: str,
+    repo_context: str | None = None,
 ) -> list[dict]:
     client = anthropic.Anthropic()
-    summary = _project_summary(sections)
+    summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
 
     print("\n  Identifying workstreams...\n")
@@ -627,9 +780,10 @@ def generate_tasks_for_workstream(
     sections: dict[str, str],
     components: list[dict],
     all_ws: list[dict],
+    repo_context: str | None = None,
 ) -> list[dict]:
     client = anthropic.Anthropic()
-    summary = _project_summary(sections)
+    summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
     all_ws_text = _all_ws_summary(all_ws)
 
@@ -702,15 +856,16 @@ def write_plan_md(ws_list: list[dict]) -> None:
 
     PLAN_MD.write_text("\n".join(lines))
     print(f"\n  Written to {PLAN_MD}\n")
+    commit_to_plan([PLAN_MD], "planning: update PLAN.md")
 
 
-def plan_workstreams(sections: dict[str, str], components: list[dict]) -> list[dict]:
+def plan_workstreams(sections: dict[str, str], components: list[dict], repo_context: str | None = None) -> list[dict]:
     print("\n" + hr("="))
     print("  Step 5: Workstreams")
     print(hr("="))
 
     _, count_instruction = _get_workstream_count(sections, components)
-    ws_list = recommend_workstreams(sections, components, count_instruction)
+    ws_list = recommend_workstreams(sections, components, count_instruction, repo_context)
     ws_list = confirm_workstreams(ws_list)
 
     if not ws_list:
@@ -719,7 +874,7 @@ def plan_workstreams(sections: dict[str, str], components: list[dict]) -> list[d
 
     print(f"\n  Generating tasks for {len(ws_list)} workstream(s)...\n")
     for ws in ws_list:
-        ws["tasks"] = generate_tasks_for_workstream(ws, sections, components, ws_list)
+        ws["tasks"] = generate_tasks_for_workstream(ws, sections, components, ws_list, repo_context)
 
     header("Writing PLAN.md")
     write_plan_md(ws_list)
@@ -732,49 +887,39 @@ def plan_workstreams(sections: dict[str, str], components: list[dict]) -> list[d
 
 TASKS_MD = Path("TASKS.md")
 
-TASK_MANIFEST_PROMPT = """\
+_TASK_MANIFEST_PROMPT_TEMPLATE = """\
 You are a senior software architect generating a complete task manifest with a dependency graph.
 
 Project:
-{summary}
+{{summary}}
 
 Tech stack:
-{stack}
+{{stack}}
 
 Workstreams and their preliminary tasks:
-{ws_tasks}
+{{ws_tasks}}
 
-Produce an enriched, sequenced task list across all workstreams.
+Produce an enriched, sequenced task list across ALL workstreams. Order tasks roughly by \
+when they can start (blockers first).
 
-Rules:
-- Assign sequential IDs: T001, T002, ... ordered roughly by when they can start.
-- Identify cross-workstream dependencies — e.g. an auth setup task blocking a \
-frontend protected-route task.
-- depends: IDs of tasks that must be complete before this one can start (or — if none).
-- unlocks: IDs of tasks that become unblocked once this one is done (or — if none).
-- criticality: P0 = project blocked without it / P1 = required for launch / P2 = polish.
-- estimate: 2h / 4h / 1d / 2d / 1w.
-- human: anything a human must do manually — set API key, approve billing, click OAuth \
-consent, register a domain, fill .env, etc. Write — if fully automatable.
-- notes: any important implementation detail, gotcha, or sequencing note. Write — if none.
+Field definitions — every task MUST include every field, even if the value is —:
+{field_defs}
 
-Output each task as a block, separated by a line containing only ---
+Output each task as a block separated by a line containing only ---
+Use exactly the field keys shown below. Do not add or omit any fields.
 
-ID: T001
-workstream: WS1 — Keymaster
-name: Register OAuth application with provider
-criticality: P0
-estimate: 2h
-depends: —
-unlocks: T002, T007
-human: Go to Google Cloud Console → create OAuth 2.0 credentials → copy client ID and secret to .env
-notes: Approval can take up to 24h if consent screen is flagged for review
+Example task block:
+{example}
 
 ---
 
-ID: T002
-...
+(continue for all tasks)
 """
+
+TASK_MANIFEST_PROMPT = _TASK_MANIFEST_PROMPT_TEMPLATE.format(
+    field_defs=field_descriptions(),
+    example=prompt_example(),
+)
 
 
 def _ws_tasks_text(ws_list: list[dict]) -> str:
@@ -789,16 +934,16 @@ def _ws_tasks_text(ws_list: list[dict]) -> str:
 def _parse_task_blocks(raw: str) -> list[dict]:
     tasks = []
     blocks = re.split(r"\n---\n", raw.strip())
-    field = re.compile(r"^(\w+):\s*(.*)$")
+    field_re = re.compile(r"^(\w+):\s*(.*)$")
 
     for block in blocks:
         task: dict = {}
         for line in block.strip().splitlines():
-            m = field.match(line.strip())
+            m = field_re.match(line.strip())
             if m:
                 task[m.group(1).strip()] = m.group(2).strip()
         if "ID" in task and "name" in task:
-            tasks.append(task)
+            tasks.append(enforce_defaults(task))
     return tasks
 
 
@@ -834,36 +979,33 @@ def write_tasks_md(tasks: list[dict]) -> None:
         ws_short = t.get("workstream", "").split("—")[0].strip()
         lines.append(
             f"| {t['ID']} | {ws_short} | {t['name']} | {t.get('criticality','')} "
-            f"| {t.get('estimate','')} | todo |"
+            f"| {t.get('estimate','')} | {t.get('status', 'todo')} |"
         )
 
     lines.append("\n## Task Details\n")
 
     for t in tasks:
-        lines += [
-            f"### {t['ID']} · {t['name']}\n",
-            f"**Workstream:** {t.get('workstream', '—')}  ",
-            f"**Criticality:** {t.get('criticality', '—')}  ",
-            f"**Estimate:** {t.get('estimate', '—')}  ",
-            f"**Status:** todo\n",
-            f"**Depends on:** {t.get('depends', '—')}  ",
-            f"**Unlocks:** {t.get('unlocks', '—')}\n",
-        ]
-        human = t.get("human", "—")
-        if human != "—":
-            lines.append(f"> **Human required:** {human}\n")
-        notes = t.get("notes", "—")
-        if notes != "—":
-            lines.append(f"**Notes:** {notes}\n")
+        lines.append(f"### {t['ID']} · {t['name']}\n")
+        # Write every field from the schema explicitly
+        for f in TASK_FIELDS:
+            if f.key in ("ID", "name"):
+                continue  # already in the heading
+            value = t.get(f.key, f.default or "—")
+            if f.key == "human" and value != "—":
+                lines.append(f"> **{f.label}:** {value}\n")
+            else:
+                lines.append(f"**{f.label}:** {value}  ")
         lines.append("")
 
     TASKS_MD.write_text("\n".join(lines))
     print(f"  Written to {TASKS_MD}\n")
+    commit_to_plan([TASKS_MD], "planning: update TASKS.md")
 
 
 def generate_task_manifest(
-    sections: dict[str, str], components: list[dict], ws_list: list[dict]
-) -> None:
+    sections: dict[str, str], components: list[dict], ws_list: list[dict],
+    repo_context: str | None = None,
+) -> list[dict] | None:
     client = anthropic.Anthropic()
 
     print("\n" + hr("="))
@@ -871,7 +1013,7 @@ def generate_task_manifest(
     print(hr("="))
     print("\n  Building full task graph with dependencies and human requirements...\n")
 
-    summary = _project_summary(sections)
+    summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
     ws_tasks = _ws_tasks_text(ws_list)
 
@@ -904,19 +1046,56 @@ def generate_task_manifest(
     if removes_raw:
         drop = set(removes_raw.split())
         tasks = [t for t in tasks if t["ID"] not in drop]
-        # Re-sequence IDs
+        # Re-sequence IDs and patch cross-references
         for i, t in enumerate(tasks, 1):
             old_id = t["ID"]
             new_id = f"T{i:03d}"
             if old_id != new_id:
                 for other in tasks:
-                    for field in ("depends", "unlocks"):
-                        if other.get(field):
-                            other[field] = other[field].replace(old_id, new_id)
+                    for f in ("depends", "unlocks"):
+                        if other.get(f):
+                            other[f] = other[f].replace(old_id, new_id)
                 t["ID"] = new_id
+
+    # Validation — required fields must not be blank
+    tasks = _validate_and_fix(tasks)
 
     header("Writing TASKS.md")
     write_tasks_md(tasks)
+    return tasks
+
+
+def _validate_and_fix(tasks: list[dict]) -> list[dict]:
+    """
+    Check every required field is non-blank. For any blank required fields,
+    show the user the task and prompt them to fill it in or confirm "" explicitly.
+    """
+    issues = validate_all(tasks)
+    if not issues:
+        return tasks
+
+    print(f"\n  {len(issues)} task(s) have blank required fields.\n")
+    print("  For each: type a value to fill it in, or press Enter to leave as \"\".\n")
+
+    task_map = {t["ID"]: t for t in tasks}
+    for tid, errors in issues.items():
+        t = task_map[tid]
+        print(f"  {hr('·')}")
+        print(f"  {tid} — {t.get('name', '')}")
+        for err in errors:
+            # err is like "  ID (label) is required but blank"
+            # Extract the field key
+            key_m = re.match(r"\s*(\w+)\s+\(", err)
+            if not key_m:
+                continue
+            key = key_m.group(1)
+            f = next((x for x in TASK_FIELDS if x.key == key), None)
+            if not f:
+                continue
+            print(f"\n    {f.label}: {f.description}")
+            val = input(f"    Value (Enter = \"\"): ").strip()
+            t[key] = val  # may be "" — that is explicit and allowed
+
     return tasks
 
 
@@ -1021,7 +1200,15 @@ def push_to_beads(tasks: list[dict]) -> None:
             print(f"  {dep_tid} blocks {tid}  [{status}]")
 
     BEADS_MAP_FILE.write_text(json.dumps(id_map, indent=2))
-    print(f"\n  ID mapping saved to {BEADS_MAP_FILE}\n")
+    print(f"\n  ID mapping saved to {BEADS_MAP_FILE}")
+
+    # Commit issues.jsonl (BEADS export) + .beads_map.json to the plan branch
+    # issues.jsonl is auto-written by BEADS after each write operation
+    issues_jsonl = Path("issues.jsonl")
+    to_commit = [f for f in [BEADS_MAP_FILE, issues_jsonl] if f.exists()]
+    if to_commit:
+        commit_to_plan(to_commit, "planning: update BEADS task export")
+        print(f"  Committed to plan branch: {', '.join(f.name for f in to_commit)}\n")
 
 
 def push_to_beads_phase(tasks: list[dict]) -> None:
@@ -1043,18 +1230,23 @@ def push_to_beads_phase(tasks: list[dict]) -> None:
 
 def main() -> None:
     try:
+        ensure_gitignore()
+        ensure_plan_branch()
+
+        repo_context = existing_repo_context()
+
         sections = collect_project_info()
         print(f"\n  PROJECT.md saved.\n")
 
-        raw_recs = stream_recommendations(sections)
+        raw_recs = stream_recommendations(sections, repo_context)
         confirmed = confirm_tech_stack(raw_recs)
 
         if confirmed:
-            write_architecture(sections, confirmed)
+            write_architecture(sections, confirmed, repo_context)
             reiterate(sections, confirmed)
-            ws_list = plan_workstreams(sections, confirmed)
+            ws_list = plan_workstreams(sections, confirmed, repo_context)
             if ws_list:
-                tasks = generate_task_manifest(sections, confirmed, ws_list)
+                tasks = generate_task_manifest(sections, confirmed, ws_list, repo_context)
                 if tasks:
                     push_to_beads_phase(tasks)
         else:
@@ -1065,7 +1257,7 @@ def main() -> None:
         print("  1. Review PROJECT.md, ARCHITECTURE.md, PLAN.md, and TASKS.md")
         print("  2. Run start.py to claim a workstream")
         print("  3. Pick your first P0 task from TASKS.md — update status in BEADS as you go")
-        print("  4. Run render.py to open the live flowchart in the browser")
+        print("  4. Run execute/render.py to open the live flowchart in the browser")
         print(hr("=") + "\n")
 
     except KeyboardInterrupt:

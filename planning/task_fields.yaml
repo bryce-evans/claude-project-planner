@@ -1,0 +1,91 @@
+# Task field schema
+# Every task must have every field present and non-null.
+# Use "" (empty string) if a field is genuinely not applicable.
+# plan.py validates this before writing TASKS.md.
+
+fields:
+  - key: ID
+    label: ID
+    description: Sequential identifier assigned by the planner (T001, T002, ...)
+    example: T001
+    required: true   # always set by code; never blank
+
+  - key: workstream
+    label: Workstream
+    description: Workstream ID and codename that owns this task
+    example: "WS1 — Keymaster"
+    required: true
+
+  - key: name
+    label: Task
+    description: Imperative verb phrase describing the work
+    example: Register OAuth application with provider
+    required: true
+
+  - key: criticality
+    label: Criticality
+    description: "P0 = project blocked without it / P1 = required for launch / P2 = polish"
+    example: P0
+    default: P1
+    required: true
+
+  - key: estimate
+    label: Estimate
+    description: "Rough effort: 2h / 4h / 1d / 2d / 1w"
+    example: 2h
+    required: true
+
+  - key: status
+    label: Status
+    description: "todo / in-progress / in-review / blocked / done / deferred"
+    example: todo
+    default: todo
+
+  - key: depends
+    label: Depends on
+    description: Comma-separated T-IDs that must be complete before this starts. "" if none.
+    example: ""
+
+  - key: unlocks
+    label: Unlocks
+    description: Comma-separated T-IDs that become startable once this is done. "" if none.
+    example: "T002, T007"
+
+  - key: human
+    label: Human required
+    description: >
+      Steps a human must do manually: set API key, approve billing, click OAuth consent,
+      register domain, fill .env, etc. "" if fully automatable.
+    example: "Go to Google Cloud Console → create OAuth 2.0 credentials → copy to .env"
+
+  - key: acceptance
+    label: Acceptance criteria
+    description: Observable, specific criteria for knowing this task is complete.
+    example: Auth endpoint returns 200 with valid JWT for correct credentials
+    required: true
+
+  - key: verification
+    label: Verification steps
+    description: >
+      Concrete steps to verify the task is done: commands to run, endpoints to hit,
+      UI flows to exercise, or assertions to check. Written so a bot can follow them.
+    example: "Run: pytest tests/auth/ -k test_jwt. Hit POST /login with valid creds, confirm 200 + token in response."
+    required: true
+
+  - key: tricky
+    label: Verification tricky spots
+    description: >
+      What is subtle or easy to miss when verifying this task. Flags common false-positives,
+      edge cases, or environment-specific gotchas that trip up automated checks.
+    example: "JWT expiry is not checked by unit tests — must also verify exp claim is set correctly in integration test."
+    required: true
+
+  - key: notes
+    label: Notes
+    description: Implementation gotchas, sequencing constraints, or key decisions. "" if none.
+    example: Consent screen approval can take up to 24h
+
+  - key: assignee
+    label: Assignee
+    description: 'Owner: person name, workstream codename, or agent ID. Leave blank if unassigned.'
+    example: ""

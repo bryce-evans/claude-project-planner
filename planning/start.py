@@ -15,11 +15,17 @@ from datetime import date
 from pathlib import Path
 
 import anthropic
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent))
+from git_plan import pull_all, plan_branch_exists
 
 MODEL = "claude-sonnet-4-6"
 
 PLAN_MD = Path("PLAN.md")
 WORKSTREAM_MD = Path("WORKSTREAM.md")
+ME_MD = Path("ME.md")
+
+_ME_PLACEHOLDER = "_TODO_"
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +40,58 @@ def header(title: str) -> None:
     print(f"\n{hr()}")
     print(f"  {title}")
     print(hr())
+
+
+# ---------------------------------------------------------------------------
+# ME.md — personal identity and context
+# ---------------------------------------------------------------------------
+
+def _me_is_blank() -> bool:
+    if not ME_MD.exists():
+        return True
+    return _ME_PLACEHOLDER in ME_MD.read_text()
+
+
+def _read_me_field(label: str) -> str:
+    if not ME_MD.exists():
+        return ""
+    m = re.search(rf"\*\*{re.escape(label)}:\*\*\s*(.+)", ME_MD.read_text())
+    return m.group(1).strip() if m else ""
+
+
+def _write_me_md(workstream: str, notes: str) -> None:
+    ME_MD.write_text(
+        f"> Personal context. Not committed to git.\n"
+        f"> Last updated: {date.today()}  |  Re-run start.py to update.\n\n"
+        f"# Me\n\n"
+        f"**Workstream:** {workstream or '—'}\n"
+        f"**Notes:** {notes or '—'}\n"
+    )
+
+
+def ensure_me_md(ws_label: str = "") -> None:
+    """
+    Ensure ME.md exists and is filled.
+    If blank/missing: ask two questions — workstream and personal notes.
+    If filled: show it and offer a quick update.
+    """
+    if _me_is_blank():
+        header("ME.md — Your personal context (not committed)")
+        print("\n  Two quick fields. This file is gitignored — it's only for you.\n")
+        ws = input(f"  Workstream (e.g. WS1 — Keymaster){f' [{ws_label}]' if ws_label else ''}: ").strip()
+        if not ws and ws_label:
+            ws = ws_label
+        notes = input("  Notes for Claude (preferences, constraints, anything relevant): ").strip()
+        _write_me_md(ws, notes)
+        print(f"\n  ME.md written.\n")
+    else:
+        print(f"\n  ME.md: {_read_me_field('Workstream')}  |  {_read_me_field('Notes')[:60]}")
+        ans = input("  Update ME.md? [y/N]: ").strip().lower()
+        if ans == "y":
+            ws = input(f"  Workstream [{_read_me_field('Workstream')}]: ").strip() or _read_me_field("Workstream")
+            notes = input(f"  Notes [{_read_me_field('Notes')[:40]}]: ").strip() or _read_me_field("Notes")
+            _write_me_md(ws, notes)
+            print("  Updated.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -173,19 +231,21 @@ def write_workstream_md(
 def main() -> None:
     try:
         print("\n" + hr("="))
-        print("  Start — Identify Yourself")
+        print("  Start — Session Setup")
         print(hr("="))
 
-        # Name / identifier
+        # Step 1: Pull everything up to date
+        print("\n  Syncing from git...\n")
+        pull_all(verbose=True)
+
+        # Step 2: Name and type
         print()
         name = input("  Your name or identifier (e.g. 'Bryce', 'claude-agent-1'): ").strip()
         while not name:
             name = input("  (required) > ").strip()
 
-        # Human or agent
-        print("\n  Are you a human or an AI agent?")
-        print("  [H] Human   [A] AI agent\n")
-        actor_raw = input("  > ").strip().lower()
+        print("\n  Human or AI agent? [H/a]: ", end="")
+        actor_raw = input().strip().lower()
         actor_type = "AI agent" if actor_raw == "a" else "Human"
 
         # Load workstreams
@@ -217,7 +277,11 @@ def main() -> None:
 
         # Confirm scope
         scope_display = ws["scope"] if ws else custom_scope
+        ws_label = f"{ws['id']} — {ws['name']}" if ws else custom_scope
         print(f"\n  Scope: {scope_display}")
+
+        # Step 3: ME.md — now we know the workstream
+        ensure_me_md(ws_label)
 
         # Optional session focus
         print("\n  Any specific focus or constraints for this session?")
