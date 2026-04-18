@@ -25,21 +25,31 @@ execution state visible to the whole team in real time.
 
 ---
 
-## Full Workflow
-
-### Phase 1 — Setup (one time per project)
-
-**1. Copy boilerplate into your new project**
+## Quickstart
 
 ```sh
-PLANNER=path/to/claude-project-planner
+PLANNER=~/code/claude-project-planner   # path to this repo
 pip install -r $PLANNER/planning/requirements.txt
 
-cd /your/new/project
-python $PLANNER/planning/setup.py
+python $PLANNER/planning/run.py ~/code/my-project
 ```
 
-Copies into your project root:
+`run.py` is the single entry point. It walks through every phase in order, marks each one complete with a checkmark, and picks up where you left off if interrupted. To force a phase to re-run:
+
+```sh
+python $PLANNER/planning/run.py ~/code/my-project -f plan
+```
+
+Available stages: `setup`, `start`, `plan`
+
+---
+
+## Full Workflow
+
+### Phase 1 — Setup
+
+`run.py` calls `setup.py` automatically. It copies boilerplate into your project root:
+
 - `PROJECT.md` — high-level project definition
 - `PLAN.md` — workstream map and task summary
 - `TASKS.md` — full task manifest with dependency graph
@@ -47,12 +57,31 @@ Copies into your project root:
 - `STYLE.md` — linting and code style rules
 - `CLAUDE.md` — Claude's reading list (loaded before every action)
 - `WORKSTREAM.md` — active role and responsibilities (updated per session)
+- `.claude/commands/` — slash commands: `/pull-all`, `/create-pr`, `/next`
 
 ---
 
-### Phase 2 — Planning (`plan.py`)
+### Phase 2 — Session start (`start.py`)
 
-Run once to define the project. Re-run to update any section.
+`run.py` calls `start.py` after setup. Run it again at the start of every new session — for humans and AI agents alike.
+
+```sh
+python $PLANNER/planning/start.py
+```
+
+- Enter your name and type (human or AI agent)
+- Pick a workstream from `PLAN.md`
+- Claude drafts your specific responsibilities based on workstream scope
+- Writes `WORKSTREAM.md` — the first thing `CLAUDE.md` tells Claude to read
+
+**Re-run whenever ownership changes or a new session begins.**
+`WORKSTREAM.md` includes a "Current Task" field — update it as you work.
+
+---
+
+### Phase 3 — Planning (`plan.py`)
+
+`run.py` calls `plan.py` once setup and start are done. Re-run with `-f plan` to update any section.
 
 ```sh
 python $PLANNER/planning/plan.py
@@ -74,27 +103,17 @@ The script walks through **8 steps**:
 
 ---
 
-### Phase 3 — Session start (`start.py`)
-
-Run at the start of every session — for humans and AI agents alike.
-
-```sh
-python $PLANNER/planning/start.py
-```
-
-- Enter your name and type (human or AI agent)
-- Pick a workstream from `PLAN.md`
-- Claude drafts your specific responsibilities based on workstream scope
-- Writes `WORKSTREAM.md` — the first thing `CLAUDE.md` tells Claude to read
-
-**Re-run whenever ownership changes or a new session begins.**
-`WORKSTREAM.md` includes a "Current Task" field — update it as you work.
-
----
-
 ### Phase 4 — Execution
 
-Pick tasks from `TASKS.md`. Every task has:
+Once planning is done, use the slash commands inside your project's Claude Code session:
+
+| Command | What it does |
+|---------|-------------|
+| `/next` | Finds the next open task for your workstream, claims it, does the work, verifies completion, then loops to the next. Stops only when done or blocked — and names the blocker explicitly |
+| `/pull-all` | Fetches origin, fast-forward merges main and your branch, syncs planning docs from the `plan` branch. Resolves merge conflicts by reading task history to ensure nothing is lost |
+| `/create-pr` | Commits planning docs to the `plan` branch, pushes your branch, captures Playwright before/after screenshots if UI files changed, and opens a `gh` PR with a structured summary |
+
+Pick tasks manually from `TASKS.md` if you prefer. Every task has:
 
 | Field | Purpose |
 |-------|---------|

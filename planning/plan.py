@@ -483,7 +483,7 @@ def write_architecture(sections: dict[str, str], components: list[dict], repo_co
 # ---------------------------------------------------------------------------
 
 REITERATE_PROMPT = """\
-You are a senior software architect reviewing a completed project definition and tech stack.
+You are a senior software architect performing a structured plan review.
 
 Project definition:
 {summary}
@@ -491,30 +491,43 @@ Project definition:
 Agreed tech stack:
 {stack}
 
-Generate a short list of observations in three categories:
+Review the plan across five lenses and produce a short, high-signal list of observations.
 
-- GAP: something the user hasn't considered that could bite them — missing requirements, \
-operational concerns, security, scaling, edge cases.
-- ALTERNATIVE: a place where their tech or design choice has a meaningful trade-off worth \
-reconsidering, with a specific suggestion.
-- CLARIFY: a question where understanding their reasoning would sharpen the plan.
+Lenses:
+
+- GAP: something not considered that could cause real problems — missing requirements, \
+operational concerns, security holes, scaling limits, edge cases, or integration risks.
+- RISK: a specific thing that is likely to go wrong or take much longer than expected, \
+with a concrete reason why (not generic "this is hard" warnings).
+- MOTIVATION: a place where the chosen approach, tech, or scope does not obviously serve \
+the stated motivation or success criteria — call out the mismatch and what would align better.
+- ALTERNATIVE: a tech or design choice with a meaningful trade-off worth reconsidering, \
+paired with a specific suggestion and why it might be a better fit.
+- CLARIFY: a question where the answer would meaningfully change the plan or architecture.
 
 Rules:
 - Be specific. "Have you considered auth?" is too vague. Instead: "You mentioned user accounts \
-but didn't specify social login vs email+password — this changes your auth library choice."
-- 4–7 items total. Quality over quantity. Only raise things that genuinely matter for this project.
-- Do not repeat anything already well-covered in the project definition.
+but didn't specify social login vs email+password — this changes your auth library choice and \
+adds an OAuth integration to scope."
+- 5–9 items total across all lenses. Quality over quantity — only raise things that genuinely \
+matter for this specific project.
+- Do not repeat anything already addressed in the project definition.
+- Prioritise RISK and MOTIVATION items if the plan has clear weak points there.
 - Format exactly — one item per line, no blank lines between items, no extra text:
 
 [GAP] observation
+[RISK] observation
+[MOTIVATION] observation
 [ALTERNATIVE] observation
 [CLARIFY] question
 """
 
 ITEM_LABELS = {
-    "GAP": ("Gap", "Something you may not have considered"),
+    "GAP":         ("Gap",         "Something not considered that could cause problems"),
+    "RISK":        ("Risk",        "Something likely to go wrong or take much longer than expected"),
+    "MOTIVATION":  ("Motivation",  "A mismatch between the approach and the stated goals"),
     "ALTERNATIVE": ("Alternative", "Another approach worth weighing"),
-    "CLARIFY": ("Clarify", "A question about your reasoning"),
+    "CLARIFY":     ("Clarify",     "A question whose answer would change the plan"),
 }
 
 
@@ -537,15 +550,16 @@ def _stack_summary(components: list[dict]) -> str:
 
 
 def _append_clarifications(entries: list[dict]) -> None:
-    """Append a Clarifications section to PROJECT.md with Q&A pairs."""
+    """Append a Review Notes section to PROJECT.md with Q&A pairs."""
     existing = PROJECT_MD.read_text() if PROJECT_MD.exists() else ""
 
-    # Remove old clarifications block if present
+    # Remove old block if present
+    existing = re.sub(r"\n## Review Notes\n[\s\S]*$", "", existing).rstrip()
     existing = re.sub(r"\n## Clarifications\n[\s\S]*$", "", existing).rstrip()
 
-    block = "\n\n## Clarifications\n\n"
+    block = "\n\n## Review Notes\n\n"
     for e in entries:
-        label, _ = ITEM_LABELS[e["tag"]][:2]
+        label = ITEM_LABELS[e["tag"]][0]
         block += f"**[{label}]** {e['text']}\n\n"
         block += f"> {e['response']}\n\n"
 
@@ -558,14 +572,14 @@ def reiterate(sections: dict[str, str], components: list[dict]) -> None:
     stack = _stack_summary(components)
 
     print("\n" + hr("="))
-    print("  Step 4: Re-iterate — Gaps, Alternatives & Clarifications")
+    print("  Step 4: Re-iterate — Validation & Review")
     print(hr("="))
-    print("\n  Reviewing your plan for things worth reconsidering...\n")
+    print("\n  Reviewing your plan for weak points, risks, motivation alignment, and improvements...\n")
 
     raw = ""
     with client.messages.stream(
         model=MODEL,
-        max_tokens=1024,
+        max_tokens=1536,
         messages=[
             {
                 "role": "user",
@@ -1057,11 +1071,59 @@ def generate_task_manifest(
                             other[f] = other[f].replace(old_id, new_id)
                 t["ID"] = new_id
 
-    # Validation — required fields must not be blank
+    # Per-task review of key fields
+    tasks = _review_tasks(tasks)
+
+    # Catch any still-blank required fields
     tasks = _validate_and_fix(tasks)
 
     header("Writing TASKS.md")
     write_tasks_md(tasks)
+    return tasks
+
+
+_REVIEW_FIELDS = [
+    ("estimate",    "Time Estimate",       "How long will this realistically take?"),
+    ("depends",     "Depends On",          "Task IDs this cannot start until they are done (space-separated)"),
+    ("unlocks",     "Unlocks / Blocks",    "Task IDs that are unblocked when this is done (space-separated)"),
+    ("acceptance",  "Success Criteria",    "Observable, specific definition of done"),
+    ("tricky",      "Risks & Focus Areas", "What is subtle, likely to go wrong, or easy to miss when verifying?"),
+    ("human",       "Human Required",      "Anything that requires a human — API keys, billing, OAuth consent, etc. '—' if none"),
+]
+
+
+def _review_tasks(tasks: list[dict]) -> list[dict]:
+    """
+    Walk through each task and let the user review/amend the six key fields.
+    Claude's generated values are shown as defaults — Enter accepts, any text overrides.
+    """
+    print(f"\n  {hr('=')}")
+    print("  Task Review — verify each task's key fields")
+    print(f"  {hr('=')}")
+    print(f"\n  {len(tasks)} task(s) to review.")
+    print("  For each field: press Enter to accept Claude's value, or type to override.\n")
+
+    ans = input("  Review tasks now? [Y/n]: ").strip().lower()
+    if ans == "n":
+        print("  Skipped — using Claude's generated values.\n")
+        return tasks
+
+    for i, task in enumerate(tasks, 1):
+        print(f"\n  {hr('─')}")
+        ws_short = task.get("workstream", "").split("—")[0].strip()
+        print(f"  [{i}/{len(tasks)}]  {task['ID']}  ·  {task.get('name', '')}  [{ws_short}]")
+        print(f"  {hr('─')}")
+
+        for key, label, description in _REVIEW_FIELDS:
+            current = task.get(key, "—") or "—"
+            print(f"\n  {label}")
+            print(f"  {description}")
+            print(f"  Current: {current}")
+            val = input("  > ").strip()
+            if val:
+                task[key] = val
+
+    print(f"\n  Review complete.\n")
     return tasks
 
 

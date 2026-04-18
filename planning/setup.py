@@ -107,17 +107,23 @@ def main() -> None:
         print(f" Kept existing: {', '.join(skipped)}.", end="")
     print("\n")
 
-    # Git setup
+    # Git setup — must run with cwd=target so git operates on the right repo
+    import os
+    orig_cwd = Path.cwd()
+    os.chdir(target)
     print("  Configuring git...\n")
     ensure_gitignore(target)
     if ensure_plan_branch():
         print("  `plan` branch is ready — planning docs will be committed there.\n")
     else:
         print("  (No git repo detected — skipping branch setup.)\n")
+    os.chdir(orig_cwd)
 
-    print("  Next steps:")
-    print("  1. python path/to/planning/start.py   — fill in ME.md, identify yourself, claim a workstream")
-    print("  2. python path/to/planning/plan.py    — define the project and generate a plan\n")
+    planner = Path(__file__).parent.resolve()
+    print("  Next steps (run these from your project directory):")
+    print(f"  1. cd {target}")
+    print(f"  2. python {planner}/start.py   — identify yourself and claim a workstream")
+    print(f"  3. python {planner}/plan.py    — define the project and generate a plan\n")
 
 
 if __name__ == "__main__":
