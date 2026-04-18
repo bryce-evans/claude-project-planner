@@ -124,9 +124,14 @@ class Stage:
 # ---------------------------------------------------------------------------
 
 def _check_setup(target: Path) -> bool:
-    required = ["CLAUDE.md", "PLAN.md", "TASKS.md", "ARCHITECTURE.md", "PROJECT.md"]
+    # CLAUDE.md and slash commands live on the working branch; planning docs may
+    # only be on the plan git branch (gitignored on main), so check both places.
+    plan_docs = {"PLAN.md", "TASKS.md", "ARCHITECTURE.md", "PROJECT.md"}
+    for name in plan_docs:
+        if not (target / name).exists() and _read_plan_file(target, name) is None:
+            return False
     return (
-        all((target / f).exists() for f in required)
+        (target / "CLAUDE.md").exists()
         and (target / ".claude" / "commands").is_dir()
     )
 
@@ -145,19 +150,25 @@ def _check_start(target: Path) -> bool:
     return bool(value) and value != "—"
 
 
+def _read_plan_file(target: Path, name: str) -> str | None:
+    """Read a file from the working tree, falling back to the plan git branch."""
+    p = target / name
+    if p.exists():
+        return p.read_text()
+    r = subprocess.run(
+        ["git", "show", f"plan:{name}"],
+        capture_output=True, text=True, cwd=target,
+    )
+    return r.stdout if r.returncode == 0 else None
+
+
 def _check_plan(target: Path) -> bool:
-    tasks = target / "TASKS.md"
-    plan  = target / "PLAN.md"
-    if not tasks.exists() or not plan.exists():
+    tasks_text = _read_plan_file(target, "TASKS.md")
+    plan_text  = _read_plan_file(target, "PLAN.md")
+    if not tasks_text or not plan_text:
         return False
-    has_tasks = any(
-        re.match(r"\|\s*T\d+", line)
-        for line in tasks.read_text().splitlines()
-    )
-    has_ws = any(
-        re.match(r"\|\s*WS\d+", line)
-        for line in plan.read_text().splitlines()
-    )
+    has_tasks = any(re.match(r"\|\s*T\d+", line) for line in tasks_text.splitlines())
+    has_ws    = any(re.match(r"\|\s*WS\d+", line) for line in plan_text.splitlines())
     return has_tasks and has_ws
 
 

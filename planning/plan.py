@@ -1436,6 +1436,95 @@ def _save_state(state: dict) -> None:
     _STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
+def _print_resume_history(state: dict) -> None:
+    """Print everything completed so far, as if it had just run live."""
+    print("\n" + hr("="))
+    print("  Claude Project Planner — Resuming from saved progress")
+    print(hr("="))
+
+    # Step 1: project sections
+    existing = load_project_md()
+    if existing:
+        print("\n" + hr("="))
+        print("  Step 1: Project Definition  (loaded)")
+        print(hr("="))
+        for key, title, _ in SECTIONS:
+            value = existing.get(key, "")
+            if not value:
+                continue
+            print(f"\n  {hr('·')}")
+            print(f"  {title}")
+            print(f"  {hr('·')}")
+            for line in value.splitlines():
+                print(f"    {line}")
+
+    # Step 2: tech stack
+    confirmed = state.get("confirmed_components")
+    if confirmed:
+        print("\n" + hr("="))
+        print("  Step 2: Tech Stack  (loaded)")
+        print(hr("="))
+        print()
+        for c in confirmed:
+            alt_hint = f"  (alt: {c['alt']})" if c.get("alt") else ""
+            print(f"  {c['name']}: {c['tech']}{alt_hint}")
+            print(f"    {c['rationale']}")
+
+    # Step 3: architecture
+    if state.get("architecture_done"):
+        print("\n" + hr("="))
+        print("  Step 3: ARCHITECTURE.md  (generated)")
+        print(hr("="))
+        arch = ""
+        if ARCHITECTURE_MD.exists():
+            arch = ARCHITECTURE_MD.read_text()
+        else:
+            r = subprocess.run(["git", "show", "plan:ARCHITECTURE.md"],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                arch = r.stdout
+        if arch:
+            lines = arch.splitlines()
+            for line in lines[:40]:
+                print(f"  {line}")
+            if len(lines) > 40:
+                print(f"  ... ({len(lines) - 40} more lines in ARCHITECTURE.md)")
+
+    if state.get("interface_review_done"):
+        print("\n" + hr("="))
+        print("  Step 3b: Interface Review  (accepted)")
+        print(hr("="))
+
+    if state.get("reiterate_done"):
+        print("\n" + hr("="))
+        print("  Step 4: Re-iterate / Validation  (complete)")
+        print(hr("="))
+
+    # Step 5: workstreams
+    ws_list: list[dict] = state.get("ws_list", [])
+    if ws_list:
+        print("\n" + hr("="))
+        print("  Step 5: Workstreams  (loaded)")
+        print(hr("="))
+        print()
+        for w in ws_list:
+            print(f"  {w['id']} — {w['name']}")
+            print(f"    {w['scope']}")
+            for t in w.get("tasks", []):
+                print(f"      [{t.get('priority', '?')}] {t['name']} ({t.get('estimate', '?')})")
+
+    if state.get("tasks_done"):
+        print("\n" + hr("="))
+        print("  Step 6: Task Manifest  (complete — see TASKS.md)")
+        print(hr("="))
+
+    print()
+    print(hr("·"))
+    print("  History shown above. Continuing from next incomplete step...")
+    print(hr("·"))
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1456,10 +1545,11 @@ def main() -> None:
             print("  Progress is saved after each step — you can Ctrl-C and resume any time.")
             print()
             input("  Press Enter to begin.")
+        else:
+            _print_resume_history(state)
 
         project_type = select_project_type()
         if "repo_context" in state:
-            print("  (Resuming — reusing saved repo context)\n")
             repo_context: str | None = state["repo_context"]
         else:
             repo_context = existing_repo_context()
@@ -1473,7 +1563,6 @@ def main() -> None:
 
         # Phase 2: tech stack
         if "confirmed_components" in state:
-            print("  (Resuming — reusing saved tech stack)\n")
             confirmed: list[dict] | None = state["confirmed_components"]
         else:
             raw_recs = stream_recommendations(sections, repo_context)
@@ -1486,7 +1575,7 @@ def main() -> None:
         else:
             # Phase 3: architecture
             if state.get("architecture_done"):
-                print("  (Resuming — ARCHITECTURE.md already generated)\n")
+                pass
             else:
                 write_architecture(sections, confirmed, repo_context)
                 state["architecture_done"] = True
@@ -1494,7 +1583,7 @@ def main() -> None:
 
             # Phase 3b: interface review
             if state.get("interface_review_done"):
-                print("  (Resuming — interface review already complete)\n")
+                pass
             else:
                 review_interfaces()
                 state["interface_review_done"] = True
@@ -1502,7 +1591,7 @@ def main() -> None:
 
             # Phase 4: reiterate
             if state.get("reiterate_done"):
-                print("  (Resuming — reiterate already complete)\n")
+                pass
             else:
                 reiterate(sections, confirmed)
                 state["reiterate_done"] = True
@@ -1510,7 +1599,6 @@ def main() -> None:
 
             # Phase 5: workstreams
             if state.get("workstreams_done"):
-                print("  (Resuming — workstreams already planned)\n")
                 ws_list: list[dict] = state.get("ws_list", [])
             else:
                 ws_list = plan_workstreams(sections, confirmed, repo_context)
@@ -1521,7 +1609,7 @@ def main() -> None:
             # Phase 6: task manifest
             if ws_list:
                 if state.get("tasks_done"):
-                    print("  (Resuming — task manifest already generated)\n")
+                    pass
                 else:
                     tasks = generate_task_manifest(sections, confirmed, ws_list, repo_context)
                     if tasks:
