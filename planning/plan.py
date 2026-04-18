@@ -1626,7 +1626,7 @@ def main() -> None:
         print("  1. Review PROJECT.md, ARCHITECTURE.md, PLAN.md, and TASKS.md")
         print("  2. Run start.py to claim a workstream")
         print("  3. Pick your first P0 task from TASKS.md — update status in BEADS as you go")
-        print("  4. Run execute/render.py to open the live flowchart in the browser")
+        print("  4. Run render.py to open the live flowchart in the browser")
         print(hr("=") + "\n")
 
     except KeyboardInterrupt:

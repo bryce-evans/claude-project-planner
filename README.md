@@ -132,21 +132,21 @@ Start with all P0 tasks. Update status in BEADS as you go (`bd update <id> --cla
 
 ---
 
-### Phase 5 — Render (`execute/render.py`)
+### Phase 5 — Render (`render.py`)
 
 Live browser flowchart of the full task graph.
 
 ```sh
-python $PLANNER/execute/render.py          # generate + open dev server at localhost:5173
-python $PLANNER/execute/render.py --data   # generate data file only, no server
+python $PLANNER/render.py          # generate + open dev server at localhost:5173
+python $PLANNER/render.py --data   # generate data file only, no server
 ```
 
 - Reads live task status from BEADS (`bd show --json`)
 - Falls back to `TASKS.md` status if BEADS is not set up
-- Writes `execute/render/src/generated/tasks.ts` and starts the Vite dev server
+- Writes `render/src/generated/tasks.ts` and starts the Vite dev server
 - Shows: status by color, timing (started 2h ago, in review since 4h ago), assignee, human-required callouts, minimap, aggregate stats
 
-**First run:** `npm install` runs automatically inside `execute/render/`.
+**First run:** `npm install` runs automatically inside `render/`.
 
 ---
 
@@ -165,11 +165,11 @@ Required fields (blank = validation error, user is prompted to fill): `ID`, `wor
 | `PROJECT.md` | `plan.py` + user | `plan.py` (resuming), Claude |
 | `ARCHITECTURE.md` | `plan.py` | Claude (via CLAUDE.md) |
 | `PLAN.md` | `plan.py` | Claude, team |
-| `TASKS.md` | `plan.py` | `start.py`, `execute/render.py`, Claude |
+| `TASKS.md` | `plan.py` | `start.py`, `render.py`, Claude |
 | `WORKSTREAM.md` | `start.py` | Claude (first thing, every session) |
 | `CLAUDE.md` | boilerplate | Claude (auto-loaded) |
-| `.beads_map.json` | `plan.py` | `execute/render.py` |
-| `execute/render/src/generated/tasks.ts` | `execute/render.py` | React app |
+| `.beads_map.json` | `plan.py` | `render.py` |
+| `render/src/generated/tasks.ts` | `render.py` | React app |
 
 ---
 

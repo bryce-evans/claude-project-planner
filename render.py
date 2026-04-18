@@ -3,11 +3,11 @@
 Generate a live task flowchart and open it in the browser.
 
 Reads live status from BEADS (bd show --json) + task metadata from TASKS.md.
-Writes execute/render/src/generated/tasks.ts, then optionally runs the Vite dev server.
+Writes render/src/generated/tasks.ts, then optionally runs the Vite dev server.
 
 Usage (run from your project root):
-    python path/to/execute/render.py          # generate + open dev server
-    python path/to/execute/render.py --data   # generate data only, no server
+    python path/to/render.py          # generate + open dev server
+    python path/to/render.py --data   # generate data file only, no server
 """
 
 import json
@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent.parent / "planning"))
+_sys.path.insert(0, str(Path(__file__).parent / "planning"))
 
 import schema as S
 

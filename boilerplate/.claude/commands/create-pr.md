@@ -11,10 +11,10 @@ If there are uncommitted changes, ask the user whether to commit them first befo
 
 ## 2. Detect UI changes
 
-Check if any changed files are in a frontend directory (common patterns: `src/`, `execute/render/src/`, `*.tsx`, `*.css`, `*.html`).
+Check if any changed files are in a frontend directory (common patterns: `src/`, `render/src/`, `*.tsx`, `*.css`, `*.html`).
 
 If UI files changed:
-- Start the dev server (e.g. `npm run dev` inside `execute/render/`) in the background
+- Start the dev server (e.g. `npm run dev` inside `render/`) in the background
 - Use Playwright to capture before/after screenshots:
   - **Before**: check out `main` in a temp worktree, screenshot the relevant pages
   - **After**: screenshot the same pages on the current branch

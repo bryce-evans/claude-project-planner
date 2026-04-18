@@ -423,7 +423,7 @@ def main() -> None:
     print(f"\n{hr('═')}")
     print("  Setup complete. Next:")
     print("  - Use /next in Claude Code to start executing tasks")
-    print("  - Run execute/render.py to open the live task flowchart")
+    print("  - Run render.py to open the live task flowchart")
     print(hr("═") + "\n")
 
 

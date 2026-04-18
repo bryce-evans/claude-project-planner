@@ -7,7 +7,7 @@ Single source of truth for:
   - Parser defaults and validation
   - TASKS.md writer
 
-Imported by plan.py and execute/render.py.
+Imported by plan.py and render.py.
 """
 
 from __future__ import annotations
