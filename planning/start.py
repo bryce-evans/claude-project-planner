@@ -14,12 +14,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
-import anthropic
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
 from git_plan import pull_all, plan_branch_exists
-
-MODEL = "claude-sonnet-4-6"
+from claude_runner import call_claude, prompt_runner, save_runner
 
 PLAN_MD = Path("PLAN.md")
 WORKSTREAM_MD = Path("WORKSTREAM.md")
@@ -59,38 +57,44 @@ def _read_me_field(label: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _write_me_md(workstream: str, notes: str) -> None:
+def _write_me_md(workstream: str, notes: str, claude_runner: str) -> None:
     ME_MD.write_text(
         f"> Personal context. Not committed to git.\n"
         f"> Last updated: {date.today()}  |  Re-run start.py to update.\n\n"
         f"# Me\n\n"
         f"**Workstream:** {workstream or '—'}\n"
         f"**Notes:** {notes or '—'}\n"
+        f"**Claude:** {claude_runner or 'claude-code'}\n"
     )
 
 
 def ensure_me_md(ws_label: str = "") -> None:
     """
     Ensure ME.md exists and is filled.
-    If blank/missing: ask two questions — workstream and personal notes.
+    If blank/missing: ask workstream, notes, and Claude runner.
     If filled: show it and offer a quick update.
     """
     if _me_is_blank():
         header("ME.md — Your personal context (not committed)")
-        print("\n  Two quick fields. This file is gitignored — it's only for you.\n")
+        print("\n  A few quick fields. This file is gitignored — it's only for you.\n")
         ws = input(f"  Workstream (e.g. WS1 — Keymaster){f' [{ws_label}]' if ws_label else ''}: ").strip()
         if not ws and ws_label:
             ws = ws_label
         notes = input("  Notes for Claude (preferences, constraints, anything relevant): ").strip()
-        _write_me_md(ws, notes)
-        print(f"\n  ME.md written.\n")
+        runner = prompt_runner()  # asks and returns 'claude-code' or 'api-key'
+        _write_me_md(ws, notes, runner)
+        print(f"  ME.md written.\n")
     else:
         print(f"\n  ME.md: {_read_me_field('Workstream')}  |  {_read_me_field('Notes')[:60]}")
         ans = input("  Update ME.md? [y/N]: ").strip().lower()
         if ans == "y":
-            ws = input(f"  Workstream [{_read_me_field('Workstream')}]: ").strip() or _read_me_field("Workstream")
+            ws    = input(f"  Workstream [{_read_me_field('Workstream')}]: ").strip() or _read_me_field("Workstream")
             notes = input(f"  Notes [{_read_me_field('Notes')[:40]}]: ").strip() or _read_me_field("Notes")
-            _write_me_md(ws, notes)
+            runner = _read_me_field("Claude") or "claude-code"
+            ans2 = input(f"  Claude runner [{runner}] — change? [y/N]: ").strip().lower()
+            if ans2 == "y":
+                runner = prompt_runner()
+            _write_me_md(ws, notes, runner)
             print("  Updated.\n")
 
 
@@ -147,35 +151,19 @@ Write only the bullet list. No preamble, no section headers. Use "- " bullets.
 
 
 def draft_responsibilities(name: str, actor_type: str, ws: dict, all_ws: list[dict]) -> str:
-    client = anthropic.Anthropic()
     all_ws_text = "\n".join(
         f"  {w['id']} — {w['name']}: {w['scope']}" for w in all_ws
     )
-
+    prompt = RESPONSIBILITIES_PROMPT.format(
+        all_ws=all_ws_text,
+        ws_id=ws["id"],
+        ws_name=ws["name"],
+        ws_scope=ws["scope"],
+        name=name,
+        actor_type=actor_type,
+    )
     print("\n  Drafting responsibilities...\n")
-    result = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=512,
-        messages=[
-            {
-                "role": "user",
-                "content": RESPONSIBILITIES_PROMPT.format(
-                    all_ws=all_ws_text,
-                    ws_id=ws["id"],
-                    ws_name=ws["name"],
-                    ws_scope=ws["scope"],
-                    name=name,
-                    actor_type=actor_type,
-                ),
-            }
-        ],
-    ) as stream:
-        for text in stream.text_stream:
-            print(text, end="", flush=True)
-            result += text
-    print()
-    return result.strip()
+    return call_claude(prompt, max_tokens=512)
 
 
 # ---------------------------------------------------------------------------

@@ -23,14 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import anthropic
 from schema import (
     TASK_FIELDS, field_descriptions, prompt_example,
     enforce_defaults, validate_all,
 )
 from git_plan import ensure_plan_branch, commit_to_plan, ensure_gitignore
+from claude_runner import call_claude
 
-MODEL = "claude-sonnet-4-6"
 
 PROJECT_MD = Path("PROJECT.md")
 ARCHITECTURE_MD = Path("ARCHITECTURE.md")
@@ -315,24 +314,13 @@ def existing_repo_context() -> str | None:
 
     print("\n  Analysing existing codebase...\n")
 
-    client = anthropic.Anthropic()
     prompt = REPO_CONTEXT_PROMPT.format(
         git_log=git_log or "(empty)",
         tree=_dir_tree(),
         file_contents=_read_key_files(),
     )
-
-    context = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            print(text, end="", flush=True)
-            context += text
-
-    print("\n")
+    context = call_claude(prompt, max_tokens=1024)
+    print()
 
     # Let user answer any questions Claude raised before continuing
     print("  Answer any of the questions above that are relevant,")
@@ -419,26 +407,13 @@ Format exactly like this (one component per line, no extra text before or after)
 
 
 def stream_recommendations(sections: dict[str, str], repo_context: str | None = None) -> str:
-    client = anthropic.Anthropic()
     summary = _project_summary(sections, repo_context)
 
     print("\n" + hr("="))
     print("  Step 2: Tech Stack Recommendations")
     print(hr("="))
     print("\n  Analyzing your project...\n")
-
-    full = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": TECH_STACK_PROMPT.format(summary=summary)}],
-    ) as stream:
-        for text in stream.text_stream:
-            print(text, end="", flush=True)
-            full += text
-
-    print("\n")
-    return full
+    return call_claude(TECH_STACK_PROMPT.format(summary=summary), max_tokens=1024)
 
 
 def parse_components(raw: str) -> list[dict]:
@@ -515,7 +490,6 @@ Rules:
 
 
 def write_architecture(sections: dict[str, str], components: list[dict], repo_context: str | None = None) -> None:
-    client = anthropic.Anthropic()
     summary = _project_summary(sections, repo_context)
     stack = "\n".join(
         f"- **{c['name']}**: {c['tech']} — {c['rationale']}" for c in components
@@ -524,21 +498,7 @@ def write_architecture(sections: dict[str, str], components: list[dict], repo_co
     header("Generating ARCHITECTURE.md")
     print()
 
-    content = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": ARCH_PROMPT.format(summary=summary, stack=stack),
-            }
-        ],
-    ) as stream:
-        for text in stream.text_stream:
-            print(text, end="", flush=True)
-            content += text
-
+    content = call_claude(ARCH_PROMPT.format(summary=summary, stack=stack), max_tokens=2048)
     ARCHITECTURE_MD.write_text(content)
     print(f"\n\n  Written to {ARCHITECTURE_MD}\n")
     commit_to_plan([ARCHITECTURE_MD], "planning: update ARCHITECTURE.md")
@@ -633,7 +593,6 @@ def _append_clarifications(entries: list[dict]) -> None:
 
 
 def reiterate(sections: dict[str, str], components: list[dict]) -> None:
-    client = anthropic.Anthropic()
     summary = _project_summary(sections)
     stack = _stack_summary(components)
 
@@ -642,19 +601,7 @@ def reiterate(sections: dict[str, str], components: list[dict]) -> None:
     print(hr("="))
     print("\n  Reviewing your plan for weak points, risks, motivation alignment, and improvements...\n")
 
-    raw = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=1536,
-        messages=[
-            {
-                "role": "user",
-                "content": REITERATE_PROMPT.format(summary=summary, stack=stack),
-            }
-        ],
-    ) as stream:
-        for text in stream.text_stream:
-            raw += text
+    raw = call_claude(REITERATE_PROMPT.format(summary=summary, stack=stack), max_tokens=1536)
 
     items = _parse_reiterate(raw)
     if not items:
@@ -775,18 +722,8 @@ def _all_ws_summary(ws_list: list[dict]) -> str:
     return "\n".join(f"  {w['id']} — {w['name']}: {w['scope']}" for w in ws_list)
 
 
-def _stream_text(client: anthropic.Anthropic, prompt: str, max_tokens: int = 1024) -> str:
-    full = ""
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            print(text, end="", flush=True)
-            full += text
-    print()
-    return full
+def _stream_text(prompt: str, max_tokens: int = 1024) -> str:
+    return call_claude(prompt, max_tokens=max_tokens)
 
 
 def _get_workstream_count(sections: dict[str, str], components: list[dict]) -> tuple[int | None, str]:
@@ -804,13 +741,11 @@ def recommend_workstreams(
     sections: dict[str, str], components: list[dict], count_instruction: str,
     repo_context: str | None = None,
 ) -> list[dict]:
-    client = anthropic.Anthropic()
     summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
 
     print("\n  Identifying workstreams...\n")
     raw = _stream_text(
-        client,
         WS_RECOMMEND_PROMPT.format(
             summary=summary, stack=stack, count_instruction=count_instruction
         ),
@@ -862,7 +797,6 @@ def generate_tasks_for_workstream(
     all_ws: list[dict],
     repo_context: str | None = None,
 ) -> list[dict]:
-    client = anthropic.Anthropic()
     summary = _project_summary(sections, repo_context)
     stack = _stack_summary(components)
     all_ws_text = _all_ws_summary(all_ws)
@@ -874,7 +808,6 @@ def generate_tasks_for_workstream(
     print("  Generating tasks...\n")
 
     raw = _stream_text(
-        client,
         WS_TASKS_PROMPT.format(
             summary=summary,
             stack=stack,
@@ -1086,8 +1019,6 @@ def generate_task_manifest(
     sections: dict[str, str], components: list[dict], ws_list: list[dict],
     repo_context: str | None = None,
 ) -> list[dict] | None:
-    client = anthropic.Anthropic()
-
     print("\n" + hr("="))
     print("  Step 6: Task Manifest")
     print(hr("="))
@@ -1097,21 +1028,10 @@ def generate_task_manifest(
     stack = _stack_summary(components)
     ws_tasks = _ws_tasks_text(ws_list)
 
-    raw = ""
-    with client.messages.stream(
-        model=MODEL,
+    raw = call_claude(
+        TASK_MANIFEST_PROMPT.format(summary=summary, stack=stack, ws_tasks=ws_tasks),
         max_tokens=4096,
-        messages=[
-            {
-                "role": "user",
-                "content": TASK_MANIFEST_PROMPT.format(
-                    summary=summary, stack=stack, ws_tasks=ws_tasks
-                ),
-            }
-        ],
-    ) as stream:
-        for text in stream.text_stream:
-            raw += text
+    )
 
     tasks = _parse_task_blocks(raw)
     if not tasks:
