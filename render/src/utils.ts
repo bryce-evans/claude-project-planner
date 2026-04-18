@@ -1,20 +1,28 @@
 import type { TaskStatus } from "./types";
 
 export const STATUS_COLOR: Record<TaskStatus, string> = {
+  todo: "#64748b",
   open: "#64748b",
+  "in-progress": "#3b82f6",
   in_progress: "#3b82f6",
+  "in-review": "#f59e0b",
   in_review: "#f59e0b",
   blocked: "#ef4444",
+  done: "#22c55e",
   closed: "#22c55e",
   deferred: "#a855f7",
   hooked: "#06b6d4",
 };
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
+  todo: "Todo",
   open: "Open",
+  "in-progress": "In Progress",
   in_progress: "In Progress",
+  "in-review": "In Review",
   in_review: "In Review",
   blocked: "Blocked",
+  done: "Done",
   closed: "Done",
   deferred: "Deferred",
   hooked: "Claimed",

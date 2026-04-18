@@ -1,8 +1,12 @@
 export type TaskStatus =
+  | "todo"
   | "open"
+  | "in-progress"
   | "in_progress"
+  | "in-review"
   | "in_review"
   | "blocked"
+  | "done"
   | "closed"
   | "deferred"
   | "hooked";
@@ -20,7 +24,7 @@ export interface TaskEvent {
   at: string; // ISO 8601
 }
 
-export interface Task {
+export interface Task extends Record<string, unknown> {
   id: string;           // T001
   beadsId: string;      // bd-a1b2
   title: string;
