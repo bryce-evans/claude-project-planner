@@ -7,14 +7,10 @@ Usage (from anywhere):
     python path/to/planning/run.py -f <stage>          # force-restart from stage
     python path/to/planning/run.py ~/my-project -f plan
 
-Stages — new repo:
-    init    — scaffold the project (Python/uv, React/Vite, Next.js, Node, Go, Rust, …)
+Stages (in order):
     setup   — copy boilerplate files (CLAUDE.md, PLAN.md, TASKS.md, slash commands, …)
-    start   — identify yourself, claim a workstream
-    plan    — define project and generate task manifest
-
-Stages — existing repo:
-    setup, start, plan  (init is skipped — code already exists)
+    plan    — define project, generate workstreams and task manifest
+    start   — identify yourself and claim one of the defined workstreams
 """
 
 import argparse
@@ -190,13 +186,6 @@ _STAGE_SETUP = Stage(
     invoke="target_arg",
 )
 
-_STAGE_START = Stage(
-    id="start",
-    label="Start       — identify yourself, claim a workstream",
-    check=_check_start,
-    script=PLANNER_DIR / "start.py",
-)
-
 _STAGE_PLAN = Stage(
     id="plan",
     label="Plan        — define project, generate task manifest",
@@ -204,9 +193,16 @@ _STAGE_PLAN = Stage(
     script=PLANNER_DIR / "plan.py",
 )
 
+_STAGE_START = Stage(
+    id="start",
+    label="Start       — identify yourself, claim a workstream",
+    check=_check_start,
+    script=PLANNER_DIR / "start.py",
+)
+
 
 def build_stages(target: Path, force_from: str | None) -> list[Stage]:
-    return [_STAGE_SETUP, _STAGE_START, _STAGE_PLAN]
+    return [_STAGE_SETUP, _STAGE_PLAN, _STAGE_START]
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +228,7 @@ def _print_stages(stages: list[Stage], target: Path, current_id: str | None) -> 
 # Arg parsing
 # ---------------------------------------------------------------------------
 
-_ALL_STAGE_IDS = ["setup", "start", "plan"]
+_ALL_STAGE_IDS = ["setup", "plan", "start"]
 
 
 def _parse_args() -> tuple[Path, str | None]:
