@@ -3,19 +3,22 @@
 Orchestrate the full claude-project-planner workflow.
 
 Usage (from anywhere):
-    python path/to/planning/run.py [target_dir]     # defaults to cwd
-    python path/to/planning/run.py -f <stage>       # force-restart from stage
+    python path/to/planning/run.py [target_dir]        # auto-detects new vs existing
+    python path/to/planning/run.py -f <stage>          # force-restart from stage
     python path/to/planning/run.py ~/my-project -f plan
 
-Stages (in order):
-    setup   — copy boilerplate files into the target project
-    start   — identify yourself, claim a workstream (writes ME.md, WORKSTREAM.md)
-    plan    — define the project and generate task manifest (writes PROJECT.md,
-              ARCHITECTURE.md, PLAN.md, TASKS.md)
+Stages — new repo:
+    init    — scaffold the project (Python/uv, React/Vite, Next.js, Node, Go, Rust, …)
+    setup   — copy boilerplate files (CLAUDE.md, PLAN.md, TASKS.md, slash commands, …)
+    start   — identify yourself, claim a workstream
+    plan    — define project and generate task manifest
+
+Stages — existing repo:
+    setup, start, plan  (init is skipped — code already exists)
 """
 
 import argparse
-import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -23,27 +26,109 @@ from pathlib import Path
 from typing import Callable
 
 PLANNER_DIR = Path(__file__).parent.resolve()
+REPO_DIR    = PLANNER_DIR.parent
+INIT_DIR    = REPO_DIR / "init"
+
 
 # ---------------------------------------------------------------------------
-# Stage definitions
+# Dependency bootstrap
+# ---------------------------------------------------------------------------
+
+def _ensure_deps() -> None:
+    """
+    Ensure the planner's Python deps are installed in the venv.
+    Prefers uv sync; falls back to pip. run.py itself doesn't need
+    these imports — the scripts it spawns use _python() (the venv interpreter).
+    """
+    venv_python = REPO_DIR / ".venv" / "bin" / "python"
+    if venv_python.exists():
+        return  # venv already set up
+
+    print("  Setting up planner environment...\n")
+    has_uv = subprocess.run(["uv", "--version"], capture_output=True).returncode == 0
+
+    if has_uv and (REPO_DIR / "pyproject.toml").exists():
+        r = subprocess.run(["uv", "sync"], cwd=REPO_DIR)
+        if r.returncode == 0:
+            print()
+            return
+        print("  uv sync failed — falling back to pip.\n")
+
+    # pip fallback: install into current interpreter
+    req = PLANNER_DIR / "requirements.txt"
+    cmd = [sys.executable, "-m", "pip", "install", "-q"]
+    cmd += ["-r", str(req)] if req.exists() else ["anthropic>=0.40.0", "pyyaml>=6.0"]
+    subprocess.run(cmd, check=True)
+
+# ---------------------------------------------------------------------------
+# New vs existing detection
+# ---------------------------------------------------------------------------
+
+# Files whose presence means the project already has real source code
+_CODE_SIGNALS = [
+    "pyproject.toml", "setup.py", "setup.cfg",   # Python
+    "package.json",                                # Node / Web
+    "go.mod",                                      # Go
+    "Cargo.toml",                                  # Rust
+    "pom.xml", "build.gradle", "build.gradle.kts", # JVM
+    "*.csproj", "*.sln",                           # .NET
+    "Gemfile",                                     # Ruby
+    "composer.json",                               # PHP
+    "mix.exs",                                     # Elixir
+]
+
+
+def _has_code(target: Path) -> bool:
+    for signal in _CODE_SIGNALS:
+        if "*" in signal:
+            if list(target.glob(signal)):
+                return True
+        elif (target / signal).exists():
+            return True
+    return False
+
+
+def _git_commit_count(target: Path) -> int:
+    r = subprocess.run(
+        ["git", "log", "--oneline"],
+        capture_output=True, text=True, cwd=target,
+    )
+    if r.returncode != 0:
+        return 0
+    return len([l for l in r.stdout.strip().splitlines() if l.strip()])
+
+
+def is_new_repo(target: Path) -> bool:
+    """
+    True when the target looks like a brand-new repo with no real source yet:
+    at most one git commit (the empty init commit) and no language config files.
+    """
+    return _git_commit_count(target) <= 1 and not _has_code(target)
+
+
+# ---------------------------------------------------------------------------
+# Stage definition
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Stage:
     id: str
     label: str
-    script: Path
-    check: Callable[[Path], bool]   # returns True if stage appears complete
-    # How to invoke: "target_arg" passes target as positional arg,
-    #                "cwd" runs the script with cwd=target
-    invoke: str = "cwd"
+    check: Callable[[Path], bool]
+    script: Path | None = None         # None for stages handled inline (init)
+    invoke: str = "cwd"                # "cwd" | "target_arg"
 
+
+# ---------------------------------------------------------------------------
+# Stage: setup / start / plan  (subprocess-based)
+# ---------------------------------------------------------------------------
 
 def _check_setup(target: Path) -> bool:
     required = ["CLAUDE.md", "PLAN.md", "TASKS.md", "ARCHITECTURE.md", "PROJECT.md"]
-    files_present = all((target / f).exists() for f in required)
-    commands_present = (target / ".claude" / "commands").is_dir()
-    return files_present and commands_present
+    return (
+        all((target / f).exists() for f in required)
+        and (target / ".claude" / "commands").is_dir()
+    )
 
 
 def _check_start(target: Path) -> bool:
@@ -53,10 +138,7 @@ def _check_start(target: Path) -> bool:
         return False
     if "_TODO_" in me.read_text():
         return False
-    ws_text = ws.read_text()
-    # WORKSTREAM.md written by start.py always has **Workstream:** line
-    import re
-    m = re.search(r"\*\*Workstream:\*\*\s*(.+)", ws_text)
+    m = re.search(r"\*\*Workstream:\*\*\s*(.+)", ws.read_text())
     if not m:
         return False
     value = m.group(1).strip()
@@ -65,98 +147,97 @@ def _check_start(target: Path) -> bool:
 
 def _check_plan(target: Path) -> bool:
     tasks = target / "TASKS.md"
-    plan = target / "PLAN.md"
+    plan  = target / "PLAN.md"
     if not tasks.exists() or not plan.exists():
         return False
-    # TASKS.md has actual task rows (lines starting with | T0)
     has_tasks = any(
-        line.strip().startswith("| T0") or line.strip().startswith("| T1")
+        re.match(r"\|\s*T\d+", line)
         for line in tasks.read_text().splitlines()
     )
-    # PLAN.md has a workstream table row (| WS)
-    has_workstreams = any(
-        line.strip().startswith("| WS")
+    has_ws = any(
+        re.match(r"\|\s*WS\d+", line)
         for line in plan.read_text().splitlines()
     )
-    return has_tasks and has_workstreams
+    return has_tasks and has_ws
 
 
-STAGES: list[Stage] = [
-    Stage(
-        id="setup",
-        label="Setup       — copy boilerplate into project",
-        script=PLANNER_DIR / "setup.py",
-        check=_check_setup,
-        invoke="target_arg",   # setup.py takes target as positional arg
-    ),
-    Stage(
-        id="start",
-        label="Start       — identify yourself, claim a workstream",
-        script=PLANNER_DIR / "start.py",
-        check=_check_start,
-        invoke="cwd",
-    ),
-    Stage(
-        id="plan",
-        label="Plan        — define project, generate task manifest",
-        script=PLANNER_DIR / "plan.py",
-        check=_check_plan,
-        invoke="cwd",
-    ),
-]
+def _python() -> str:
+    """Return the python executable to use — venv if available, else current."""
+    venv = REPO_DIR / ".venv" / "bin" / "python"
+    return str(venv) if venv.exists() else sys.executable
 
-STAGE_IDS = [s.id for s in STAGES]
+
+def _run_script(stage: Stage, target: Path) -> int:
+    assert stage.script is not None
+    cmd = [_python(), str(stage.script)]
+    if stage.invoke == "target_arg":
+        cmd.append(str(target))
+        cwd = PLANNER_DIR
+    else:
+        cwd = target
+    return subprocess.run(cmd, cwd=cwd).returncode
+
+
+# ---------------------------------------------------------------------------
+# Build stage list based on repo type
+# ---------------------------------------------------------------------------
+
+_STAGE_SETUP = Stage(
+    id="setup",
+    label="Setup       — copy boilerplate, slash commands, plan branch",
+    check=_check_setup,
+    script=PLANNER_DIR / "setup.py",
+    invoke="target_arg",
+)
+
+_STAGE_START = Stage(
+    id="start",
+    label="Start       — identify yourself, claim a workstream",
+    check=_check_start,
+    script=PLANNER_DIR / "start.py",
+)
+
+_STAGE_PLAN = Stage(
+    id="plan",
+    label="Plan        — define project, generate task manifest",
+    check=_check_plan,
+    script=PLANNER_DIR / "plan.py",
+)
+
+
+def build_stages(target: Path, force_from: str | None) -> list[Stage]:
+    return [_STAGE_SETUP, _STAGE_START, _STAGE_PLAN]
 
 
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
 
-def _status_line(stage: Stage, target: Path, forced_from: str | None, current_id: str | None) -> str:
-    done = stage.check(target)
-    if done:
-        marker = "✓"
-    elif stage.id == current_id:
-        marker = "▶"
-    else:
-        marker = "○"
-
-    forced_note = " (forced)" if stage.id == forced_from else ""
-    return f"  {marker}  {stage.label}{forced_note}"
-
-
-def _print_stages(target: Path, forced_from: str | None, current_id: str | None) -> None:
+def _print_stages(stages: list[Stage], target: Path, current_id: str | None) -> None:
     print(f"\n  Project: {target}")
+    print(f"  Mode:    {'new repo' if _STAGE_INIT in stages else 'existing repo'}\n")
+    for stage in stages:
+        done = stage.check(target)
+        if done:
+            marker = "✓"
+        elif stage.id == current_id:
+            marker = "▶"
+        else:
+            marker = "○"
+        print(f"  {marker}  {stage.label}")
     print()
-    for stage in STAGES:
-        print(_status_line(stage, target, forced_from, current_id))
-    print()
 
 
 # ---------------------------------------------------------------------------
-# Run a single stage
+# Arg parsing
 # ---------------------------------------------------------------------------
 
-def _run_stage(stage: Stage, target: Path) -> int:
-    cmd = [sys.executable, str(stage.script)]
-    if stage.invoke == "target_arg":
-        cmd.append(str(target))
-        cwd = PLANNER_DIR
-    else:
-        cwd = target
+_ALL_STAGE_IDS = ["setup", "start", "plan"]
 
-    result = subprocess.run(cmd, cwd=cwd)
-    return result.returncode
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def _parse_args() -> tuple[Path, str | None]:
     parser = argparse.ArgumentParser(
         description="Run the claude-project-planner workflow.",
-        add_help=True,
     )
     parser.add_argument(
         "target",
@@ -167,14 +248,19 @@ def _parse_args() -> tuple[Path, str | None]:
     parser.add_argument(
         "-f", "--force",
         metavar="STAGE",
-        choices=STAGE_IDS,
+        choices=_ALL_STAGE_IDS,
         default=None,
-        help=f"Force-restart from this stage. Choices: {', '.join(STAGE_IDS)}",
+        help=f"Force-restart from this stage. Choices: {', '.join(_ALL_STAGE_IDS)}",
     )
     args = parser.parse_args()
     target = Path(args.target).resolve() if args.target else Path.cwd()
+    target.mkdir(parents=True, exist_ok=True)
     return target, args.force
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     target, force_from = _parse_args()
@@ -184,49 +270,55 @@ def main() -> None:
     print("  Claude Project Planner")
     print(sep)
 
-    # Determine which stage to start from
-    force_index = STAGE_IDS.index(force_from) if force_from else None
+    _ensure_deps()
+
+    stages = build_stages(target, force_from)
+    stage_ids = [s.id for s in stages]
+
+    force_index = stage_ids.index(force_from) if force_from and force_from in stage_ids else None
 
     while True:
         # Find the first stage to run
         start_index: int | None = None
-        for i, stage in enumerate(STAGES):
-            if force_index is not None and i < force_index:
-                continue  # skip stages before the forced start
-            if force_index is not None and i == force_index:
-                start_index = i
-                force_index = None  # only force once; subsequent stages run normally
-                break
+        for i, stage in enumerate(stages):
+            if force_index is not None:
+                if i < force_index:
+                    continue
+                if i == force_index:
+                    start_index = i
+                    force_index = None
+                    break
             if not stage.check(target):
                 start_index = i
                 break
 
-        current_id = STAGES[start_index].id if start_index is not None else None
-        _print_stages(target, force_from if start_index is not None and STAGES[start_index].id == force_from else None, current_id)
+        current_id = stages[start_index].id if start_index is not None else None
+        _print_stages(stages, target, current_id)
 
         if start_index is None:
             print(f"  All stages complete. Your project is ready at:\n  {target}\n")
             break
 
-        stage = STAGES[start_index]
+        stage = stages[start_index]
         print(f"{sep}")
         print(f"  Running: {stage.id}")
         print(f"{sep}\n")
 
-        returncode = _run_stage(stage, target)
+        returncode = _run_script(stage, target)
 
         if returncode != 0:
             print(f"\n  ✗ Stage '{stage.id}' exited with code {returncode}.")
             print(f"  Fix the issue and re-run, or use -f {stage.id} to retry.\n")
             sys.exit(returncode)
 
-        # After a stage completes, verify it actually finished
         if not stage.check(target):
             print(f"\n  ⚠  Stage '{stage.id}' ran but does not appear complete.")
             print(f"  Re-run to try again, or use -f {stage.id} to force-restart.\n")
             sys.exit(1)
 
-        # Loop — will pick up the next incomplete stage automatically
+        # Re-evaluate stage list in case init changed what's needed
+        stages = build_stages(target, None)
+        stage_ids = [s.id for s in stages]
 
 
 if __name__ == "__main__":

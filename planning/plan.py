@@ -223,6 +223,72 @@ def _read_key_files() -> str:
     return "\n\n".join(parts) or "(none found)"
 
 
+_ARCH_TYPE_MARKER = "## Project Type\n"
+_INIT_DIR = Path(__file__).parent.parent / "init"
+
+
+def select_project_type() -> str | None:
+    """
+    For new projects: present the scaffold menu and record the decision in
+    ARCHITECTURE.md. No commands are run — just writes the decision text.
+    Skipped if ARCHITECTURE.md already has a Project Type section.
+    Returns the STACK_NOTES string for inclusion in subsequent Claude prompts,
+    or None if skipped/existing.
+    """
+    arch = Path("ARCHITECTURE.md")
+
+    # Already decided
+    if arch.exists() and _ARCH_TYPE_MARKER in arch.read_text():
+        # Extract and return existing notes
+        text = arch.read_text()
+        start = text.index(_ARCH_TYPE_MARKER) + len(_ARCH_TYPE_MARKER)
+        end = text.find("\n##", start)
+        return text[start:end].strip() if end != -1 else text[start:].strip()
+
+    # Only ask for genuinely new repos (no language config files present)
+    code_signals = [
+        "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+        "app.json", "app.config.ts", "vite.config.ts", "next.config.js",
+    ]
+    if any(Path(f).exists() for f in code_signals):
+        return None
+
+    # Load scaffolders
+    import sys as _sys
+    _sys.path.insert(0, str(_INIT_DIR.parent))
+    try:
+        from init import SCAFFOLDERS
+    except ImportError:
+        return None
+
+    print("\n" + hr("="))
+    print("  Step 0a: Project Type")
+    print(hr("="))
+    print("\n  What kind of project are you building?\n")
+    for i, s in enumerate(SCAFFOLDERS, 1):
+        print(f"  {i}. {s.NAME:<34}  {s.DESCRIPTION}")
+    print(f"  {len(SCAFFOLDERS) + 1}. Other / not listed\n")
+
+    choice = input("  Choice (Enter to skip): ").strip()
+    if not choice.isdigit():
+        return None
+    idx = int(choice) - 1
+    if not (0 <= idx < len(SCAFFOLDERS)):
+        return None
+
+    s = SCAFFOLDERS[idx]
+    stack_notes = f"**Type:** {s.NAME}\n**Stack:** {s.STACK_NOTES}\n"
+
+    # Append to ARCHITECTURE.md (create minimal placeholder if missing)
+    if not arch.exists():
+        arch.write_text("# Architecture\n\n_To be filled in during planning._\n")
+
+    existing = arch.read_text().rstrip()
+    arch.write_text(existing + f"\n\n{_ARCH_TYPE_MARKER}{stack_notes}")
+    print(f"\n  Project type recorded in ARCHITECTURE.md: {s.NAME}\n")
+    return stack_notes
+
+
 def existing_repo_context() -> str | None:
     """
     Detect if we're in an existing repo with history.
@@ -1295,7 +1361,12 @@ def main() -> None:
         ensure_gitignore()
         ensure_plan_branch()
 
+        project_type = select_project_type()
         repo_context = existing_repo_context()
+
+        if project_type:
+            # Prepend type to repo_context so Claude always sees it
+            repo_context = f"Project type decision:\n{project_type}\n\n{repo_context or ''}".strip() or None
 
         sections = collect_project_info()
         print(f"\n  PROJECT.md saved.\n")
