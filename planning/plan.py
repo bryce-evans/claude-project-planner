@@ -1447,6 +1447,16 @@ def main() -> None:
 
         state = _load_state()
 
+        if not state:
+            print("\n" + hr("="))
+            print("  Claude Project Planner")
+            print(hr("="))
+            print()
+            print("  This full planning session takes 40–60 minutes.")
+            print("  Progress is saved after each step — you can Ctrl-C and resume any time.")
+            print()
+            input("  Press Enter to begin.")
+
         project_type = select_project_type()
         if "repo_context" in state:
             print("  (Resuming — reusing saved repo context)\n")
