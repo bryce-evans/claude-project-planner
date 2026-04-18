@@ -3,7 +3,7 @@ import type { Task } from "./types";
 import { STATUS_COLOR, STATUS_LABEL, EVENT_LABEL, relativeTime } from "./utils";
 
 interface Props {
-  data: Task;
+  data: Task & { dimmed?: boolean };
   selected: boolean;
 }
 
@@ -34,7 +34,8 @@ export default function TaskNode({ data, selected }: Props) {
         overflow: "hidden",
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        transition: "box-shadow 0.15s, border-color 0.15s",
+        transition: "box-shadow 0.15s, border-color 0.15s, opacity 0.15s",
+        opacity: data.dimmed ? 0.2 : 1,
       }}
     >
       <Handle

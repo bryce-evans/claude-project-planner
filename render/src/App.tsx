@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -108,27 +108,105 @@ function StatPill({
   );
 }
 
+// Derive unique workstreams in order of first appearance
+const WORKSTREAMS = Array.from(
+  new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).entries()
+).map(([id, full]) => ({
+  id,
+  full,
+  name: full.includes("—") ? full.split("—")[1].trim() : full,
+  color: ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"][
+    Array.from(new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).keys()).indexOf(id) % 6
+  ],
+}));
+
+const WS_COLOR = Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color]));
+
 export default function App() {
   const { nodes: initNodes, edges: initEdges } = useMemo(
     () => buildGraph(tasks),
     []
   );
-  const [nodes, , onNodesChange] = useNodesState(initNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
   const [edges, , onEdgesChange] = useEdgesState(initEdges);
+  const [hoveredWs, setHoveredWs] = useState<string | null>(null);
 
   const byStatus = useCallback(
     (s: TaskStatus) => tasks.filter((t) => t.status === s).length,
     []
   );
 
-  const done = byStatus("closed");
-  const inProgress = byStatus("in_progress") + byStatus("in_review") + byStatus("hooked");
+  const done = byStatus("closed") + byStatus("done");
+  const inProgress = byStatus("in_progress") + byStatus("in-progress") + byStatus("in_review") + byStatus("in-review") + byStatus("hooked");
   const blocked = byStatus("blocked");
   const p0 = tasks.filter((t) => t.criticality === "P0").length;
   const humanSteps = tasks.filter((t) => t.humanRequired).length;
 
+  const handleWsHover = useCallback(
+    (wsId: string | null) => {
+      setHoveredWs(wsId);
+      setNodes((nds) =>
+        nds.map((n) => {
+          const task = n.data as Task;
+          const taskWsId = task.workstream.split("—")[0].trim();
+          const dimmed = wsId !== null && taskWsId !== wsId;
+          return { ...n, data: { ...task, dimmed } };
+        })
+      );
+    },
+    [setNodes]
+  );
+
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#0f172a" }}>
+    <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex" }}>
+      {/* Workstream sidebar */}
+      <div
+        style={{
+          width: 180,
+          flexShrink: 0,
+          background: "rgba(15,23,42,0.95)",
+          borderRight: "1px solid #1e293b",
+          display: "flex",
+          flexDirection: "column",
+          paddingTop: 56,
+          zIndex: 20,
+        }}
+      >
+        <div style={{ padding: "10px 14px 6px", fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Workstreams
+        </div>
+        {WORKSTREAMS.map((ws) => (
+          <div
+            key={ws.id}
+            onMouseEnter={() => handleWsHover(ws.id)}
+            onMouseLeave={() => handleWsHover(null)}
+            style={{
+              padding: "9px 14px",
+              cursor: "default",
+              background: hoveredWs === ws.id ? `${ws.color}18` : "transparent",
+              borderLeft: `3px solid ${hoveredWs === ws.id ? ws.color : "transparent"}`,
+              transition: "background 0.12s, border-color 0.12s",
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            <span style={{ fontSize: 9, fontWeight: 700, color: ws.color, letterSpacing: "0.05em" }}>
+              {ws.id}
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: hoveredWs === ws.id ? "#f1f5f9" : "#94a3b8" }}>
+              {ws.name}
+            </span>
+            <span style={{ fontSize: 9, color: "#475569" }}>
+              {tasks.filter((t) => t.workstream.split("—")[0].trim() === ws.id).length} tasks
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Main canvas */}
+      <div style={{ flex: 1, position: "relative" }}>
+
       {/* Top bar */}
       <div
         style={{
@@ -230,7 +308,7 @@ export default function App() {
         fitViewOptions={{ padding: 0.15 }}
         minZoom={0.2}
         maxZoom={2}
-        style={{ background: "#0f172a" }}
+        style={{ background: "#0f172a", width: "100%", height: "100%" }}
       >
         <Background color="#1e293b" gap={24} size={1} />
         <Controls
@@ -254,6 +332,7 @@ export default function App() {
           pannable
         />
       </ReactFlow>
+      </div>
     </div>
   );
 }
