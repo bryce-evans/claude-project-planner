@@ -26,6 +26,7 @@ PLANNING_DOCS = [
     "ARCHITECTURE.md",
     "PLAN.md",
     "TASKS.md",
+    "FUTURE_WORK.md",
 ]
 
 # Files that are gitignored on ALL branches (personal / local-only)

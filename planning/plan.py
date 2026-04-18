@@ -736,6 +736,19 @@ def reiterate(sections: dict[str, str], components: list[dict]) -> None:
 
 PLAN_MD = Path("PLAN.md")
 
+FUTURE_WORK_MD = Path("FUTURE_WORK.md")
+
+
+def _future_work_context() -> str:
+    """Return FUTURE_WORK.md content if it exists and has deferred items."""
+    if not FUTURE_WORK_MD.exists():
+        return ""
+    text = FUTURE_WORK_MD.read_text().strip()
+    if "None yet" in text or not text:
+        return ""
+    return f"\nDeferred / out-of-scope items (do NOT include these in the current plan):\n{text}\n"
+
+
 WS_RECOMMEND_PROMPT = """\
 You are a senior software architect dividing project work into parallel workstreams.
 
@@ -744,7 +757,7 @@ Project definition:
 
 Tech stack:
 {stack}
-
+{future_work}
 Identify {count_instruction} natural workstreams that could be staffed and run in parallel. \
 Each should represent a coherent branch of the project with clear ownership.
 
@@ -769,7 +782,7 @@ Project:
 
 Tech stack:
 {stack}
-
+{future_work}
 All workstreams (for context — do not duplicate work across them):
 {all_ws}
 
@@ -847,7 +860,8 @@ def recommend_workstreams(
     print("\n  Identifying workstreams...\n")
     raw = _stream_text(
         WS_RECOMMEND_PROMPT.format(
-            summary=summary, stack=stack, count_instruction=count_instruction
+            summary=summary, stack=stack, count_instruction=count_instruction,
+            future_work=_future_work_context(),
         ),
     )
     return _parse_workstreams(raw)
@@ -912,6 +926,7 @@ def generate_tasks_for_workstream(
             summary=summary,
             stack=stack,
             all_ws=all_ws_text,
+            future_work=_future_work_context(),
             ws_id=ws["id"],
             ws_name=ws["name"],
             ws_scope=ws["scope"],

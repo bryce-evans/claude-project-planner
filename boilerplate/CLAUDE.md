@@ -9,6 +9,7 @@ If any file is missing, stop and tell the user which one is absent and how to re
 - [STYLE.md](STYLE.md) — linting, code style rules, and how to enforce them
 - [PLAN.md](PLAN.md) — workstreams, scope, and status
 - [TASKS.md](TASKS.md) — full task manifest: dependencies, unlocks, estimates, human requirements
+- [FUTURE_WORK.md](FUTURE_WORK.md) — intentionally deferred items. **Read before adding tasks to PLAN.md** to avoid pulling deferred work back into current scope.
 
 When picking up a task:
 1. Confirm it belongs to your workstream before starting.
