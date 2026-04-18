@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TASKS_MD = Path("TASKS.md")
+PLAN_MD = Path("PLAN.md")
 
 # Field definitions inlined from planning/task_fields.yaml so render.py has no
 # external dependencies beyond the Python standard library.
@@ -111,6 +112,35 @@ def load_tasks_md() -> list[dict]:
     return tasks
 
 
+def _sync_plan_from_branch() -> bool:
+    """Pull PLAN.md from the plan git branch into the working directory if absent."""
+    if PLAN_MD.exists():
+        return True
+    r = subprocess.run(["git", "show", "plan:PLAN.md"], capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        PLAN_MD.write_text(r.stdout)
+        return True
+    return False
+
+
+def load_workstream_scopes() -> dict[str, str]:
+    """Return {WS_ID: scope_description} parsed from PLAN.md Workstreams table."""
+    if not PLAN_MD.exists() and not _sync_plan_from_branch():
+        return {}
+
+    content = PLAN_MD.read_text()
+    scopes: dict[str, str] = {}
+
+    # Match table rows: | WS1 | Name | Scope text | Status |
+    for m in re.finditer(r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|", content, re.MULTILINE):
+        ws_id = m.group(1).strip()
+        scope = m.group(2).strip()
+        if scope and scope.lower() not in ("scope", "---", ""):
+            scopes[ws_id] = scope
+
+    return scopes
+
+
 # ---------------------------------------------------------------------------
 # Query BEADS for live status + timestamps
 # ---------------------------------------------------------------------------
@@ -178,7 +208,7 @@ def _ts_events(events: list[dict]) -> str:
     return "[\n    " + ",\n    ".join(items) + "\n  ]"
 
 
-def write_data_ts(tasks: list[dict], beads_state: dict[str, dict]) -> None:
+def write_data_ts(tasks: list[dict], beads_state: dict[str, dict], ws_scopes: dict[str, str] | None = None) -> None:
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -190,8 +220,19 @@ def write_data_ts(tasks: list[dict], beads_state: dict[str, dict]) -> None:
         "",
         f'export const generatedAt = "{now}"',
         "",
-        "export const tasks: Task[] = [",
     ]
+
+    # Emit workstream scope map
+    if ws_scopes:
+        scope_entries = ", ".join(
+            f'"{k}": {_ts_string(v)}' for k, v in ws_scopes.items()
+        )
+        lines.append(f'export const workstreamScopes: Record<string, string> = {{ {scope_entries} }}')
+    else:
+        lines.append('export const workstreamScopes: Record<string, string> = {}')
+    lines.append("")
+
+    lines.append("export const tasks: Task[] = [")
 
     for t in tasks:
         bd = beads_state.get(t["id"], {})
@@ -262,6 +303,10 @@ def main() -> None:
 
     print(f"  {len(tasks)} task(s) loaded from TASKS.md")
 
+    ws_scopes = load_workstream_scopes()
+    if ws_scopes:
+        print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
+
     id_map: dict[str, str] = {}
     if BEADS_MAP_FILE.exists():
         id_map = json.loads(BEADS_MAP_FILE.read_text())
@@ -273,7 +318,7 @@ def main() -> None:
         print("  No .beads_map.json — using static status from TASKS.md\n")
         beads_state = {}
 
-    write_data_ts(tasks, beads_state)
+    write_data_ts(tasks, beads_state, ws_scopes)
 
     if data_only:
         print("\n  Done (data only). Open the render app manually.\n")

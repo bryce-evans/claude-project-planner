@@ -11,7 +11,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
-import { tasks, generatedAt } from "./generated/tasks";
+import { tasks, generatedAt, workstreamScopes } from "./generated/tasks";
 import TaskNode from "./TaskNode";
 import type { Task, TaskStatus } from "./types";
 import { STATUS_COLOR, relativeTime } from "./utils";
@@ -270,6 +270,13 @@ export default function App() {
                     gap: 10,
                   }}
                 >
+                  {/* Scope tagline */}
+                  {workstreamScopes[ws.id] && (
+                    <div style={{ fontSize: 9, color: "#64748b", lineHeight: 1.5 }}>
+                      {workstreamScopes[ws.id]}
+                    </div>
+                  )}
+
                   {/* Assignees */}
                   <div>
                     <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>

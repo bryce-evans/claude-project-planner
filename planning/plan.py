@@ -1222,6 +1222,9 @@ def generate_task_manifest(
     # Catch any still-blank required fields
     tasks = _validate_and_fix(tasks)
 
+    # Structural verification of the dependency graph
+    tasks = verify_task_graph(tasks)
+
     header("Writing TASKS.md")
     write_tasks_md(tasks)
     return tasks
@@ -1304,6 +1307,230 @@ def _validate_and_fix(tasks: list[dict]) -> list[dict]:
             t[key] = val  # may be "" — that is explicit and allowed
 
     return tasks
+
+
+# ---------------------------------------------------------------------------
+# Phase 6b — structural verification of the task graph
+# ---------------------------------------------------------------------------
+
+_SENSITIVE_KEYWORDS = re.compile(
+    r"\b(secret|api.?key|credential|token|password|billing|payment|invoice|"
+    r"provision|cloud.?account|subscription|oauth|app.?store|domain|dns|"
+    r"ssl|certificate|auth|firewall|vpn|hardware|server|deploy|hosting|"
+    r"sendgrid|stripe|twilio|aws|gcp|azure|heroku|vercel|fly\.io|"
+    r"openai|anthropic|dashboard)\b",
+    re.IGNORECASE,
+)
+
+_CODE_ONLY_KEYWORDS = re.compile(
+    r"\b(implement|write|build|create|add|refactor|migrate|update|fix|test|"
+    r"parse|render|display|calculate|connect|integrate|wire|handle|define|"
+    r"configure|setup|scaffold|stub|mock|lint|format)\b",
+    re.IGNORECASE,
+)
+
+_INTEGRATION_KEYWORDS = re.compile(
+    r"\b(integrat|end.?to.?end|e2e|mvp|demo|final|launch|ship|release|"
+    r"smoke.?test|test.?all|everything|full.?stack)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_label(t: dict) -> str:
+    return f"{t['ID']} — {t.get('name', '')}"
+
+
+def _verify_task_graph(tasks: list[dict]) -> list[str]:
+    """
+    Run four structural checks and return a list of human-readable issue strings.
+    """
+    issues: list[str] = []
+    ids = {t["ID"] for t in tasks}
+
+    # Build dependency sets
+    depends_on: dict[str, set[str]] = {}
+    is_depended_on: set[str] = set()
+    for t in tasks:
+        raw_dep = t.get("depends", "")
+        deps = {x.strip() for x in re.split(r"[,\s]+", raw_dep) if re.match(r"T\d+", x.strip())}
+        deps &= ids
+        depends_on[t["ID"]] = deps
+        is_depended_on |= deps
+
+    raw_unlocks_map: dict[str, set[str]] = {}
+    for t in tasks:
+        raw_ul = t.get("unlocks", "")
+        uls = {x.strip() for x in re.split(r"[,\s]+", raw_ul) if re.match(r"T\d+", x.strip())}
+        raw_unlocks_map[t["ID"]] = uls & ids
+
+    # All tasks that are referenced as dependencies of others OR via unlocks
+    has_downstream: set[str] = set()
+    for t in tasks:
+        has_downstream |= depends_on[t["ID"]]       # what this task points TO as blockers
+        has_downstream |= raw_unlocks_map[t["ID"]]  # what this task says it unlocks
+
+    # Rebuild: which tasks have *something* depending on them?
+    needed_by: set[str] = set()
+    for t in tasks:
+        needed_by |= depends_on[t["ID"]]
+
+    # ── Check 1: sensitive tasks should be human-required ──────────────────
+    for t in tasks:
+        name = t.get("name", "")
+        human = (t.get("human") or "").strip()
+        if _SENSITIVE_KEYWORDS.search(name) and not human:
+            issues.append(
+                f"[HUMAN-MISSING]  {_task_label(t)}\n"
+                f"    Task name suggests secrets/auth/billing but Human Required is blank."
+            )
+
+    # ── Check 2: clearly code-only tasks should NOT be human-required ──────
+    for t in tasks:
+        name = t.get("name", "")
+        human = (t.get("human") or "").strip()
+        if human and _CODE_ONLY_KEYWORDS.search(name) and not _SENSITIVE_KEYWORDS.search(name):
+            issues.append(
+                f"[HUMAN-SPURIOUS] {_task_label(t)}\n"
+                f"    Marked human-required but looks like a pure code task — verify this is intentional.\n"
+                f"    Human Required: {human[:120]}"
+            )
+
+    # ── Check 3: root tasks (no dependencies) should truly be startable ────
+    for t in tasks:
+        deps = depends_on[t["ID"]]
+        if not deps:
+            # These should be genuinely independent — no check to fail, just note
+            pass  # intentional no-op; we surface the count for user awareness
+
+    # ── Check 4: every task should unlock something, or be depended-on, ────
+    #            or be the integration/demo sink ──────────────────────────────
+    # Find the sink: task with most in-edges that also has integration keywords
+    integration_tasks = {t["ID"] for t in tasks if _INTEGRATION_KEYWORDS.search(t.get("name", ""))}
+    for t in tasks:
+        tid = t["ID"]
+        # OK if: something depends on it, or it declares an unlock, or it's the integration task
+        depended_on = tid in needed_by
+        declares_unlocks = bool(raw_unlocks_map[tid])
+        is_sink = tid in integration_tasks
+        if not depended_on and not declares_unlocks and not is_sink:
+            issues.append(
+                f"[ORPHAN-LEAF]    {_task_label(t)}\n"
+                f"    Nothing depends on this task and it unlocks nothing — it may be disconnected from the graph."
+            )
+
+    # Check 4b: warn if no integration/sink task exists at all
+    if not integration_tasks:
+        issues.append(
+            "[NO-SINK]        No task with integration/MVP/demo language found.\n"
+            "    Consider adding a final 'Integrate & demo MVP' task that depends on all workstream outputs."
+        )
+
+    return issues
+
+
+_VERIFY_FIX_PROMPT = """\
+You are reviewing a task manifest for structural correctness. Below are the issues found:
+
+{issues}
+
+Here is the full current task list:
+
+{task_blocks}
+
+Fix ALL issues by returning the corrected task list in the same block format (fields separated by \
+newlines, tasks separated by ---). Apply minimal changes — only fix what is flagged.
+Do NOT add or remove tasks unless absolutely necessary to resolve a [NO-SINK] issue.
+For [HUMAN-MISSING]: add a concise Human Required line describing what must be done manually.
+For [HUMAN-SPURIOUS]: clear the human field if the task is truly automatable.
+For [ORPHAN-LEAF]: add the task ID to a downstream task's depends field, or add a missing unlocks entry.
+For [NO-SINK]: add a new final integration task (T999 placeholder — it will be renumbered).
+"""
+
+
+def _tasks_to_block_text(tasks: list[dict]) -> str:
+    lines = []
+    field_keys = [f.key for f in TASK_FIELDS]
+    for t in tasks:
+        lines.append(f"ID: {t['ID']}")
+        lines.append(f"name: {t.get('name', '')}")
+        for k in field_keys:
+            if k not in ("ID", "name"):
+                lines.append(f"{k}: {t.get(k, '')}")
+        lines.append("---")
+    return "\n".join(lines)
+
+
+def verify_task_graph(tasks: list[dict]) -> list[dict]:
+    """
+    Show structural issues to the user; offer a Claude auto-fix pass if there are any.
+    Returns the (possibly corrected) task list.
+    """
+    print(f"\n  {hr('=')}")
+    print("  Step 6b: Task Graph Verification")
+    print(f"  {hr('=')}\n")
+
+    issues = _verify_task_graph(tasks)
+
+    root_tasks = [t for t in tasks if not depends_on_ids(t, tasks)]
+    print(f"  Root tasks (can start immediately): {len(root_tasks)}")
+    for t in root_tasks:
+        print(f"    {_task_label(t)}")
+
+    if not issues:
+        print("\n  ✓ No structural issues found — task graph looks good.\n")
+        return tasks
+
+    print(f"\n  {len(issues)} issue(s) found:\n")
+    for iss in issues:
+        for line in iss.splitlines():
+            print(f"    {line}")
+        print()
+
+    ans = input("  Auto-fix with Claude? [Y/n]: ").strip().lower()
+    if ans in ("n", "no"):
+        print("  Skipping auto-fix — issues remain.\n")
+        return tasks
+
+    print()
+    raw = _timed_call(
+        lambda: call_claude(
+            _VERIFY_FIX_PROMPT.format(
+                issues="\n".join(issues),
+                task_blocks=_tasks_to_block_text(tasks),
+            ),
+            max_tokens=4096,
+            print_output=False,
+        ),
+        "Auto-fixing task graph",
+    )
+
+    fixed = _parse_task_blocks(raw)
+    if not fixed:
+        print("  Could not parse Claude's corrections — keeping original tasks.\n")
+        return tasks
+
+    # Re-sequence IDs cleanly
+    for i, t in enumerate(fixed, 1):
+        t["ID"] = f"T{i:03d}"
+
+    print(f"\n  Fixed task list has {len(fixed)} task(s).\n")
+    second_pass = _verify_task_graph(fixed)
+    if second_pass:
+        print(f"  {len(second_pass)} issue(s) remain after fix — review manually:\n")
+        for iss in second_pass:
+            for line in iss.splitlines():
+                print(f"    {line}")
+            print()
+    else:
+        print("  ✓ All issues resolved.\n")
+
+    return fixed
+
+
+def depends_on_ids(t: dict, tasks: list[dict]) -> set[str]:
+    ids = {x["ID"] for x in tasks}
+    raw = t.get("depends", "")
+    return {x.strip() for x in re.split(r"[,\s]+", raw) if re.match(r"T\d+", x.strip())} & ids
 
 
 # ---------------------------------------------------------------------------
