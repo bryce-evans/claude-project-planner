@@ -33,8 +33,9 @@ ALWAYS_IGNORED = [
     "ME.md",
     "WORKSTREAM.md",
     ".beads_map.json",
-    ".beads/",       # local embedded Dolt database
-    "issues.jsonl",  # BEADS export — only tracked on the plan branch
+    ".beads/",            # local embedded Dolt database
+    "issues.jsonl",       # BEADS export — only tracked on the plan branch
+    ".planner_state.json", # local checkpoint for plan.py resume
 ]
 
 

@@ -135,10 +135,9 @@ def prompt_section(key: str, title: str, question: str, existing: str | None) ->
     print("  (Enter your answer. Blank line to finish.)\n")
     while True:
         line = input("  > ")
-        if line == "" and lines:
+        if line == "":
             break
-        if line != "":
-            lines.append(line)
+        lines.append(line)
 
     return "\n".join(lines)
 
@@ -356,11 +355,17 @@ def collect_project_info() -> dict[str, str]:
     total = len(SECTIONS)
     if filled:
         print(f"\n  Found existing PROJECT.md ({filled}/{total} sections filled).")
+        if filled == total:
+            print("  All sections complete — skipping to next phase.\n")
+            return sections
     else:
         print("\n  No PROJECT.md found — starting fresh.")
 
     for key, title, question in SECTIONS:
-        sections[key] = prompt_section(key, title, question, existing.get(key))
+        if key in existing:
+            print(f"\n  ✓  {title}: (loaded from PROJECT.md — skipping)")
+            continue
+        sections[key] = prompt_section(key, title, question, None)
         save_project_md(sections)
 
     return sections
@@ -1273,6 +1278,26 @@ def push_to_beads_phase(tasks: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint state (session resume across interruptions)
+# ---------------------------------------------------------------------------
+
+_STATE_FILE = Path(".planner_state.json")
+
+
+def _load_state() -> dict:
+    if _STATE_FILE.exists():
+        try:
+            return json.loads(_STATE_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    _STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1281,29 +1306,75 @@ def main() -> None:
         ensure_gitignore()
         ensure_plan_branch()
 
+        state = _load_state()
+
         project_type = select_project_type()
-        repo_context = existing_repo_context()
+        if "repo_context" in state:
+            print("  (Resuming — reusing saved repo context)\n")
+            repo_context: str | None = state["repo_context"]
+        else:
+            repo_context = existing_repo_context()
+            state["repo_context"] = repo_context
+            _save_state(state)
 
         if project_type:
-            # Prepend type to repo_context so Claude always sees it
             repo_context = f"Project type decision:\n{project_type}\n\n{repo_context or ''}".strip() or None
 
         sections = collect_project_info()
-        print(f"\n  PROJECT.md saved.\n")
 
-        raw_recs = stream_recommendations(sections, repo_context)
-        confirmed = confirm_tech_stack(raw_recs)
-
-        if confirmed:
-            write_architecture(sections, confirmed, repo_context)
-            reiterate(sections, confirmed)
-            ws_list = plan_workstreams(sections, confirmed, repo_context)
-            if ws_list:
-                tasks = generate_task_manifest(sections, confirmed, ws_list, repo_context)
-                if tasks:
-                    push_to_beads_phase(tasks)
+        # Phase 2: tech stack
+        if "confirmed_components" in state:
+            print("  (Resuming — reusing saved tech stack)\n")
+            confirmed: list[dict] | None = state["confirmed_components"]
         else:
+            raw_recs = stream_recommendations(sections, repo_context)
+            confirmed = confirm_tech_stack(raw_recs)
+            state["confirmed_components"] = confirmed
+            _save_state(state)
+
+        if not confirmed:
             print("  Skipping ARCHITECTURE.md generation.\n")
+        else:
+            # Phase 3: architecture
+            if state.get("architecture_done"):
+                print("  (Resuming — ARCHITECTURE.md already generated)\n")
+            else:
+                write_architecture(sections, confirmed, repo_context)
+                state["architecture_done"] = True
+                _save_state(state)
+
+            # Phase 4: reiterate
+            if state.get("reiterate_done"):
+                print("  (Resuming — reiterate already complete)\n")
+            else:
+                reiterate(sections, confirmed)
+                state["reiterate_done"] = True
+                _save_state(state)
+
+            # Phase 5: workstreams
+            if state.get("workstreams_done"):
+                print("  (Resuming — workstreams already planned)\n")
+                ws_list: list[dict] = state.get("ws_list", [])
+            else:
+                ws_list = plan_workstreams(sections, confirmed, repo_context)
+                state["workstreams_done"] = True
+                state["ws_list"] = ws_list
+                _save_state(state)
+
+            # Phase 6: task manifest
+            if ws_list:
+                if state.get("tasks_done"):
+                    print("  (Resuming — task manifest already generated)\n")
+                else:
+                    tasks = generate_task_manifest(sections, confirmed, ws_list, repo_context)
+                    if tasks:
+                        state["tasks_done"] = True
+                        _save_state(state)
+                        push_to_beads_phase(tasks)
+
+        # All done — remove state file
+        if _STATE_FILE.exists():
+            _STATE_FILE.unlink()
 
         print(hr("="))
         print("  Done! Next steps:")
@@ -1314,7 +1385,7 @@ def main() -> None:
         print(hr("=") + "\n")
 
     except KeyboardInterrupt:
-        print("\n\n  Interrupted. Progress saved to PROJECT.md.\n")
+        print("\n\n  Interrupted. Progress saved — re-run plan.py to resume.\n")
         sys.exit(0)
 
 
