@@ -80,6 +80,48 @@ function buildGraph(tasks: Task[]): { nodes: Node[]; edges: Edge[] } {
 
 const nodeTypes: NodeTypes = { taskNode: TaskNode as never };
 
+// ---------------------------------------------------------------------------
+// Estimate parsing
+// ---------------------------------------------------------------------------
+
+function parseHours(est: string): number {
+  const s = est.toLowerCase().trim();
+  if (s.endsWith("w")) return parseFloat(s) * 40;
+  if (s.endsWith("d")) return parseFloat(s) * 8;
+  if (s.endsWith("h")) return parseFloat(s);
+  return 0;
+}
+
+function fmtHours(h: number): string {
+  if (h === 0) return "—";
+  if (h >= 40 && h % 40 === 0) return `${h / 40}w`;
+  if (h >= 8 && h % 8 === 0) return `${h / 8}d`;
+  return `${h}h`;
+}
+
+const DONE_STATUSES = new Set(["done", "closed"]);
+const ACTIVE_STATUSES = new Set(["in_progress", "in-progress", "in_review", "in-review", "hooked"]);
+
+// ---------------------------------------------------------------------------
+// Per-workstream stats
+// ---------------------------------------------------------------------------
+
+function wsStats(wsId: string) {
+  const wsTasks = tasks.filter((t) => t.workstream.split("—")[0].trim() === wsId);
+  const done = wsTasks.filter((t) => DONE_STATUSES.has(t.status));
+  const remaining = wsTasks.filter((t) => !DONE_STATUSES.has(t.status));
+  const assignees = Array.from(
+    new Set(wsTasks.map((t) => t.assignee).filter(Boolean) as string[])
+  );
+  return {
+    total: wsTasks.length,
+    doneCount: done.length,
+    hoursCompleted: done.reduce((s, t) => s + parseHours(t.estimate), 0),
+    hoursRemaining: remaining.reduce((s, t) => s + parseHours(t.estimate), 0),
+    assignees,
+  };
+}
+
 function StatPill({
   label,
   value,
@@ -130,6 +172,7 @@ export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
   const [edges, , onEdgesChange] = useEdgesState(initEdges);
   const [hoveredWs, setHoveredWs] = useState<string | null>(null);
+  const [expandedWs, setExpandedWs] = useState<string | null>(null);
 
   const byStatus = useCallback(
     (s: TaskStatus) => tasks.filter((t) => t.status === s).length,
@@ -162,7 +205,7 @@ export default function App() {
       {/* Workstream sidebar */}
       <div
         style={{
-          width: 180,
+          width: 200,
           flexShrink: 0,
           background: "rgba(15,23,42,0.95)",
           borderRight: "1px solid #1e293b",
@@ -170,38 +213,122 @@ export default function App() {
           flexDirection: "column",
           paddingTop: 56,
           zIndex: 20,
+          overflowY: "auto",
         }}
       >
         <div style={{ padding: "10px 14px 6px", fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
           Workstreams
         </div>
-        {WORKSTREAMS.map((ws) => (
-          <div
-            key={ws.id}
-            onMouseEnter={() => handleWsHover(ws.id)}
-            onMouseLeave={() => handleWsHover(null)}
-            style={{
-              padding: "9px 14px",
-              cursor: "default",
-              background: hoveredWs === ws.id ? `${ws.color}18` : "transparent",
-              borderLeft: `3px solid ${hoveredWs === ws.id ? ws.color : "transparent"}`,
-              transition: "background 0.12s, border-color 0.12s",
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-            }}
-          >
-            <span style={{ fontSize: 9, fontWeight: 700, color: ws.color, letterSpacing: "0.05em" }}>
-              {ws.id}
-            </span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: hoveredWs === ws.id ? "#f1f5f9" : "#94a3b8" }}>
-              {ws.name}
-            </span>
-            <span style={{ fontSize: 9, color: "#475569" }}>
-              {tasks.filter((t) => t.workstream.split("—")[0].trim() === ws.id).length} tasks
-            </span>
-          </div>
-        ))}
+        {WORKSTREAMS.map((ws) => {
+          const isHovered = hoveredWs === ws.id;
+          const isExpanded = expandedWs === ws.id;
+          const stats = wsStats(ws.id);
+
+          return (
+            <div key={ws.id}>
+              {/* Row */}
+              <div
+                onMouseEnter={() => handleWsHover(ws.id)}
+                onMouseLeave={() => handleWsHover(null)}
+                onClick={() => setExpandedWs(isExpanded ? null : ws.id)}
+                style={{
+                  padding: "9px 14px",
+                  cursor: "pointer",
+                  background: isHovered || isExpanded ? `${ws.color}18` : "transparent",
+                  borderLeft: `3px solid ${isHovered || isExpanded ? ws.color : "transparent"}`,
+                  transition: "background 0.12s, border-color 0.12s",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: ws.color, letterSpacing: "0.05em" }}>
+                    {ws.id}
+                  </span>
+                  <span style={{ fontSize: 9, color: "#475569", transition: "transform 0.15s", display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none" }}>
+                    ▶
+                  </span>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: isHovered || isExpanded ? "#f1f5f9" : "#94a3b8" }}>
+                  {ws.name}
+                </span>
+                <span style={{ fontSize: 9, color: "#475569" }}>
+                  {stats.doneCount}/{stats.total} done
+                </span>
+              </div>
+
+              {/* Expanded detail panel */}
+              {isExpanded && (
+                <div
+                  style={{
+                    background: `${ws.color}0d`,
+                    borderLeft: `3px solid ${ws.color}44`,
+                    padding: "10px 14px 12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  {/* Assignees */}
+                  <div>
+                    <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                      Assigned to
+                    </div>
+                    {stats.assignees.length > 0 ? (
+                      stats.assignees.map((a) => (
+                        <div key={a} style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
+                          <span>👤</span> {a}
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ fontSize: 10, color: "#334155", fontStyle: "italic" }}>Unassigned</div>
+                    )}
+                  </div>
+
+                  {/* Progress bar */}
+                  <div>
+                    <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
+                      Progress
+                    </div>
+                    <div style={{ height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%",
+                        width: `${stats.total ? (stats.doneCount / stats.total) * 100 : 0}%`,
+                        background: ws.color,
+                        borderRadius: 2,
+                        transition: "width 0.3s",
+                      }} />
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 9, color: "#475569" }}>
+                      {stats.doneCount} of {stats.total} tasks
+                    </div>
+                  </div>
+
+                  {/* Hours */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                        Completed
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e" }}>
+                        {fmtHours(stats.hoursCompleted)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                        Remaining
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: ws.color }}>
+                        {fmtHours(stats.hoursRemaining)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Main canvas */}
