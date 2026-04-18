@@ -1067,7 +1067,7 @@ def _print_task_table(tasks: list[dict]) -> None:
         ws_short = t.get("workstream", "").split("—")[0].strip()
         human_flag = "  *" if t.get("human", "—") != "—" else ""
         print(f"  {t['ID']:<6} {ws_short:<6} {t.get('criticality',''):<5} {t.get('estimate',''):<5}  {t['name']}{human_flag}")
-    print(f"\n  * = requires human action\n")
+    print(f"\n  * = requires human action (AI cannot do this)\n")
 
 
 def write_tasks_md(tasks: list[dict]) -> None:
@@ -1218,7 +1218,7 @@ _REVIEW_FIELDS = [
     ("unlocks",     "Unlocks / Blocks",    "Task IDs that are unblocked when this is done (space-separated)"),
     ("acceptance",  "Success Criteria",    "Observable, specific definition of done"),
     ("tricky",      "Risks & Focus Areas", "What is subtle, likely to go wrong, or easy to miss when verifying?"),
-    ("human",       "Human Required",      "Anything that requires a human — API keys, billing, OAuth consent, etc. '—' if none"),
+    ("human",       "Human Required",      "Actions an AI cannot do: billing approval, API key creation in a dashboard, OAuth app registration, provisioning, app store submissions. Blank if AI can fully automate."),
 ]
 
 

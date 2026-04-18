@@ -54,9 +54,12 @@ fields:
   - key: human
     label: Human required
     description: >
-      Steps a human must do manually: set API key, approve billing, click OAuth consent,
-      register domain, fill .env, etc. "" if fully automatable.
-    example: "Go to Google Cloud Console → create OAuth 2.0 credentials → copy to .env"
+      Actions an AI agent physically cannot perform: purchasing/billing approval, provisioning
+      cloud accounts, setting API keys or secrets in external dashboards, OAuth app registration,
+      app store submissions, domain registration, hardware setup, or any step behind a login
+      wall that requires account ownership. Leave blank if an AI can fully automate this task.
+      Do NOT mark a task human-required just because a human happens to be doing it.
+    example: "OpenAI dashboard → create API key → add to .env as OPENAI_API_KEY"
 
   - key: acceptance
     label: Acceptance criteria
