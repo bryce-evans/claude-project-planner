@@ -19,9 +19,9 @@ execution state visible to the whole team in real time.
 
 | Component | Directory | Status |
 |-----------|-----------|--------|
-| **boilerplate** | `boilerplate/` | Markdown templates for every project |
+| **boilerplate** | `boilerplate/` | Markdown templates copied into every new project |
 | **planning** | `planning/` | Interactive CLI: project → plan → tasks |
-| **execute** | `execute/` | Live browser flowchart of task execution |
+| **render** | `render/` | Live browser flowchart of task execution (copied into each project by setup) |
 
 ---
 
@@ -57,7 +57,7 @@ Available stages: `setup`, `start`, `plan`
 - `STYLE.md` — linting and code style rules
 - `CLAUDE.md` — Claude's reading list (loaded before every action)
 - `WORKSTREAM.md` — active role and responsibilities (updated per session)
-- `.claude/commands/` — slash commands: `/pull-all`, `/create-pr`, `/next`
+- `.claude/commands/` — slash commands: `/create-pr`, `/next`
 
 ---
 
@@ -110,8 +110,7 @@ Once planning is done, use the slash commands inside your project's Claude Code 
 | Command | What it does |
 |---------|-------------|
 | `/next` | Finds the next open task for your workstream, claims it, does the work, verifies completion, then loops to the next. Stops only when done or blocked — and names the blocker explicitly |
-| `/pull-all` | Fetches origin, fast-forward merges main and your branch, syncs planning docs from the `plan` branch. Resolves merge conflicts by reading task history to ensure nothing is lost |
-| `/create-pr` | Commits planning docs to the `plan` branch, pushes your branch, captures Playwright before/after screenshots if UI files changed, and opens a `gh` PR with a structured summary |
+| `/create-pr` | Pushes your branch, captures Playwright before/after screenshots if UI files changed, and opens a `gh` PR with a structured summary |
 
 Pick tasks manually from `TASKS.md` if you prefer. Every task has:
 
@@ -132,21 +131,28 @@ Start with all P0 tasks. Update status in BEADS as you go (`bd update <id> --cla
 
 ---
 
-### Phase 5 — Render (`render.py`)
+### Phase 5 — Render (`render/render.py`)
 
-Live browser flowchart of the full task graph.
+Live browser flowchart of the full task graph. `render/render.py` is copied into your project by `setup.py` — run it from your project root:
 
 ```sh
-python $PLANNER/render.py          # generate + open dev server at localhost:5173
-python $PLANNER/render.py --data   # generate data file only, no server
+python render/render.py          # generate data + open dev server at localhost:5173
+python render/render.py --data   # generate data file only, no server
 ```
 
 - Reads live task status from BEADS (`bd show --json`)
 - Falls back to `TASKS.md` status if BEADS is not set up
 - Writes `render/src/generated/tasks.ts` and starts the Vite dev server
-- Shows: status by color, timing (started 2h ago, in review since 4h ago), assignee, human-required callouts, minimap, aggregate stats
 
 **First run:** `npm install` runs automatically inside `render/`.
+
+![Project flow overview showing all workstreams and task dependency graph](docs/render-overview.png)
+
+The left sidebar shows each workstream with task counts and hours. Expand a workstream to see its scope, assignees, and progress. Hovering highlights all tasks in that workstream.
+
+![Close-up of a human-required task with warning callout](docs/render-human-required.png)
+
+Tasks that require human action (API key setup, billing, OAuth registration) are flagged with ⚠️ and show the exact steps needed.
 
 ---
 
