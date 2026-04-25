@@ -17,8 +17,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-TASKS_MD = Path("TASKS.md")
-PLAN_MD = Path("PLAN.md")
+_PROJECT_ROOT = Path(__file__).parent.parent
+TASKS_MD = _PROJECT_ROOT / "TASKS.md"
+PLAN_MD = _PROJECT_ROOT / "PLAN.md"
 
 # Field definitions inlined from planning/task_fields.yaml so render.py has no
 # external dependencies beyond the Python standard library.
@@ -43,8 +44,8 @@ def _enforce_defaults(task: dict) -> dict:
         if task.get(key) is None:
             task[key] = default
     return task
-BEADS_MAP_FILE = Path(".beads_map.json")
-RENDER_DIR = Path.cwd() / "render"
+BEADS_MAP_FILE = _PROJECT_ROOT / ".beads_map.json"
+RENDER_DIR = Path(__file__).parent
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
 
@@ -69,23 +70,8 @@ def _parse_ids(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
 
 
-def _sync_from_plan_branch() -> bool:
-    """Pull TASKS.md from the plan git branch into the working directory if absent."""
-    if TASKS_MD.exists():
-        return True
-    r = subprocess.run(
-        ["git", "show", "plan:TASKS.md"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0 and r.stdout.strip():
-        TASKS_MD.write_text(r.stdout)
-        print(f"  Synced TASKS.md from plan branch.")
-        return True
-    return False
-
-
 def load_tasks_md() -> list[dict]:
-    if not TASKS_MD.exists() and not _sync_from_plan_branch():
+    if not TASKS_MD.exists():
         return []
 
     content = TASKS_MD.read_text()
@@ -112,20 +98,9 @@ def load_tasks_md() -> list[dict]:
     return tasks
 
 
-def _sync_plan_from_branch() -> bool:
-    """Pull PLAN.md from the plan git branch into the working directory if absent."""
-    if PLAN_MD.exists():
-        return True
-    r = subprocess.run(["git", "show", "plan:PLAN.md"], capture_output=True, text=True)
-    if r.returncode == 0 and r.stdout.strip():
-        PLAN_MD.write_text(r.stdout)
-        return True
-    return False
-
-
 def load_workstream_scopes() -> dict[str, str]:
     """Return {WS_ID: scope_description} parsed from PLAN.md Workstreams table."""
-    if not PLAN_MD.exists() and not _sync_plan_from_branch():
+    if not PLAN_MD.exists():
         return {}
 
     content = PLAN_MD.read_text()
@@ -295,11 +270,6 @@ def main() -> None:
     data_only = "--data" in sys.argv
 
     print("\n  Render — loading task data...\n")
-
-    if not RENDER_DIR.exists():
-        print(f"  ERROR: render/ not found at {RENDER_DIR}")
-        print(f"  Run setup.py first to copy the render app into this project.\n")
-        sys.exit(1)
 
     tasks = load_tasks_md()
     if not tasks:
