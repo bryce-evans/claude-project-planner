@@ -5,7 +5,7 @@ ME.md
 .beads/
 # BEADS task→ID mapping (local only)
 .beads_map.json
-# BEADS issue export (tracked on plan branch only, not workstream/main)
+# BEADS issue export (local only)
 issues.jsonl
 
 # Python

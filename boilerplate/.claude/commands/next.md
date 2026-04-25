@@ -77,18 +77,7 @@ If verification passes:
 1. Mark task closed in BEADS: `bd update <beads-id> --status closed`
 2. Update `TASKS.md` status to `done`.
 3. Clear **Current Task** in `WORKSTREAM.md`.
-4. Commit any changed files (code + TASKS.md + WORKSTREAM.md).
-5. Commit updated planning docs to the plan branch:
-   ```
-   python - <<'EOF'
-   import sys
-   from pathlib import Path
-   sys.path.insert(0, 'planning')
-   from git_plan import commit_to_plan, PLANNING_DOCS
-   files = [Path(f) for f in PLANNING_DOCS if Path(f).exists()]
-   commit_to_plan(files, "chore: mark task done")
-   EOF
-   ```
+4. Commit all changed files (code + TASKS.md + WORKSTREAM.md) in one commit.
 
 **Then immediately loop back to step 3** and pick the next task. Keep working until there is nothing left to do or a concrete blocker forces a stop.
 

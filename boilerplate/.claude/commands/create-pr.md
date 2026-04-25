@@ -21,25 +21,7 @@ If UI files changed:
 - Include the screenshot paths in the PR body as image references or describe what changed visually
 - Stop the dev server after capturing
 
-## 3. Commit planning docs to plan branch
-
-Run:
-```
-python - <<'EOF'
-import sys
-from pathlib import Path
-sys.path.insert(0, 'planning')
-from git_plan import commit_to_plan, PLANNING_DOCS
-files = [Path(f) for f in PLANNING_DOCS if Path(f).exists()]
-if files:
-    commit_to_plan(files, "chore: sync planning docs pre-PR")
-    print("Planning docs committed to plan branch.")
-else:
-    print("No planning docs to commit.")
-EOF
-```
-
-## 4. Push the current branch
+## 3. Push the current branch
 
 Run: `git push -u origin HEAD`
 
