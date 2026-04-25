@@ -29,7 +29,7 @@ from schema import (
     TASK_FIELDS, field_descriptions, prompt_example,
     enforce_defaults, validate_all,
 )
-from git_plan import ensure_plan_branch, commit_to_plan, ensure_gitignore
+from git_plan import commit_planning_docs, ensure_gitignore
 from claude_runner import call_claude_cli as call_claude
 
 
@@ -102,7 +102,7 @@ def save_project_md(sections: dict[str, str]) -> None:
         lines.append(f"## {title}\n")
         lines.append((sections.get(key) or "_TODO_") + "\n\n")
     PROJECT_MD.write_text("\n".join(lines))
-    commit_to_plan([PROJECT_MD], "planning: update PROJECT.md")
+    commit_planning_docs([PROJECT_MD], "planning: update PROJECT.md")
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +507,7 @@ def write_architecture(sections: dict[str, str], components: list[dict], repo_co
     content = call_claude(ARCH_PROMPT.format(summary=summary, stack=stack), max_tokens=2048)
     ARCHITECTURE_MD.write_text(content)
     print(f"\n\n  Written to {ARCHITECTURE_MD}\n")
-    commit_to_plan([ARCHITECTURE_MD], "planning: update ARCHITECTURE.md")
+    commit_planning_docs([ARCHITECTURE_MD], "planning: update ARCHITECTURE.md")
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +586,7 @@ def review_interfaces() -> None:
             lines.append(line)
 
         if not lines:
-            commit_to_plan([ARCHITECTURE_MD], "planning: finalize interfaces in ARCHITECTURE.md")
+            commit_planning_docs([ARCHITECTURE_MD], "planning: finalize interfaces in ARCHITECTURE.md")
             print("  Interfaces accepted.\n")
             break
 
@@ -984,7 +984,7 @@ def write_plan_md(ws_list: list[dict]) -> None:
 
     PLAN_MD.write_text("\n".join(lines))
     print(f"\n  Written to {PLAN_MD}\n")
-    commit_to_plan([PLAN_MD], "planning: update PLAN.md")
+    commit_planning_docs([PLAN_MD], "planning: update PLAN.md")
 
 
 def plan_workstreams(sections: dict[str, str], components: list[dict], repo_context: str | None = None) -> list[dict]:
@@ -1127,7 +1127,7 @@ def write_tasks_md(tasks: list[dict]) -> None:
 
     TASKS_MD.write_text("\n".join(lines))
     print(f"  Written to {TASKS_MD}\n")
-    commit_to_plan([TASKS_MD], "planning: update TASKS.md")
+    commit_planning_docs([TASKS_MD], "planning: update TASKS.md")
 
 
 def _timed_call(fn, label: str) -> str:
@@ -1641,7 +1641,7 @@ def push_to_beads(tasks: list[dict]) -> None:
     issues_jsonl = Path("issues.jsonl")
     to_commit = [f for f in [BEADS_MAP_FILE, issues_jsonl] if f.exists()]
     if to_commit:
-        commit_to_plan(to_commit, "planning: update BEADS task export")
+        commit_planning_docs(to_commit, "planning: update BEADS task export")
         print(f"  Committed to plan branch: {', '.join(f.name for f in to_commit)}\n")
 
 
@@ -1774,7 +1774,6 @@ def _print_resume_history(state: dict) -> None:
 def main() -> None:
     try:
         ensure_gitignore()
-        ensure_plan_branch()
 
         state = _load_state()
 

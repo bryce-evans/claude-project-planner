@@ -16,7 +16,7 @@ from pathlib import Path
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
-from git_plan import pull_all, plan_branch_exists
+
 from claude_runner import call_claude, prompt_runner, save_runner
 
 PLAN_MD = Path("PLAN.md")
@@ -222,11 +222,7 @@ def main() -> None:
         print("  Start — Session Setup")
         print(hr("="))
 
-        # Step 1: Pull everything up to date
-        print("\n  Syncing from git...\n")
-        pull_all(verbose=True)
-
-        # Step 2: Name and type
+        # Step 1: Name and type
         print()
         name = input("  Your name or identifier (e.g. 'Bryce', 'claude-agent-1'): ").strip()
         while not name:

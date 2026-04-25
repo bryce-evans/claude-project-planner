@@ -13,10 +13,11 @@ import sys
 from pathlib import Path
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).parent))
-from git_plan import ensure_plan_branch, ensure_gitignore
+from git_plan import ensure_gitignore
 
 BOILERPLATE_DIR = Path(__file__).parent.parent / "boilerplate"
 RENDER_SRC_DIR = Path(__file__).parent.parent / "render"
+RENDER_PY_SRC = Path(__file__).parent.parent / "render" / "render.py"
 
 # Files that get special merge handling instead of copy/overwrite
 _MERGE_GITIGNORE = ".gitignore"
@@ -108,6 +109,8 @@ def main() -> None:
         print(f" Kept existing: {', '.join(skipped)}.", end="")
     print("\n")
 
+    # render.py is included inside render/ via the copytree below
+
     # Copy render app (task visualiser) — skip node_modules, dist, and generated data
     render_dst = target / "render"
     if RENDER_SRC_DIR.exists() and not render_dst.exists():
@@ -116,8 +119,6 @@ def main() -> None:
         print(f"  + render/  (task visualiser)")
     elif render_dst.exists():
         print(f"  ~ render/  (kept existing)")
-    else:
-        print(f"  ! render/  (source not found at {RENDER_SRC_DIR} — skipping)")
 
     # Git setup — must run with cwd=target so git operates on the right repo
     import os
@@ -125,10 +126,6 @@ def main() -> None:
     os.chdir(target)
     print("  Configuring git...\n")
     ensure_gitignore(target)
-    if ensure_plan_branch():
-        print("  `plan` branch is ready — planning docs will be committed there.\n")
-    else:
-        print("  (No git repo detected — skipping branch setup.)\n")
     os.chdir(orig_cwd)
 
     planner = Path(__file__).parent.resolve()
