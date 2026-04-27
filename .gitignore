@@ -22,3 +22,8 @@ Thumbs.db
 .dolt/
 *.db
 .beads-credential-key
+
+# Generated data files (written by render.py / plan.py at runtime)
+.beads_map.json
+render/src/generated/
+render/public/tasks.json
