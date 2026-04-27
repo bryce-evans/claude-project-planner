@@ -127,9 +127,28 @@ def _bd_json(*args: str) -> dict | None:
     if result.returncode != 0 or not result.stdout.strip():
         return None
     try:
-        return json.loads(result.stdout)
+        data = json.loads(result.stdout)
+        # bd show returns a list — unwrap to single dict
+        if isinstance(data, list):
+            return data[0] if data else None
+        return data
     except json.JSONDecodeError:
         return None
+
+
+def load_beads_all() -> list[dict]:
+    """Load all tasks from BEADS via bd list --json (primary source)."""
+    result = subprocess.run(
+        ["bd", "list", "--status", "open,in_progress,blocked,closed", "--json"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    try:
+        data = json.loads(result.stdout)
+        return data if isinstance(data, list) else []
+    except json.JSONDecodeError:
+        return []
 
 
 def load_beads_state(id_map: dict[str, str]) -> dict[str, dict]:
@@ -140,6 +159,51 @@ def load_beads_state(id_map: dict[str, str]) -> dict[str, dict]:
         if data:
             state[tid] = data
     return state
+
+
+def merge_beads_with_md(
+    beads_tasks: list[dict],
+    inverted_map: dict[str, str],
+    tasks_md: dict[str, dict],
+) -> tuple[list[dict], dict[str, str]]:
+    """Merge bd list output with TASKS.md metadata.
+
+    Returns (merged_task_list, effective_id_map) where effective_id_map
+    maps T-id -> beads_id for the event-timestamp fetch pass.
+    """
+    tasks: list[dict] = []
+    id_map_out: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for bd in beads_tasks:
+        bd_id = bd["id"]
+        t_id = inverted_map.get(bd_id, bd_id)  # fall back to beads_id if unmapped
+
+        if t_id in seen:
+            continue
+        seen.add(t_id)
+
+        md = tasks_md.get(t_id, {})
+
+        priority = bd.get("priority", 1)
+        criticality = md.get("criticality") or (f"P{priority}" if isinstance(priority, int) else str(priority))
+
+        task: dict = {
+            "id": t_id,
+            "title": bd.get("title") or md.get("title") or bd_id,
+            "workstream": md.get("workstream") or "",
+            "criticality": criticality,
+            "estimate": md.get("estimate") or "",
+            "status": bd.get("status") or "open",
+            "depends": md.get("depends") or [],
+            "unlocks": md.get("unlocks") or [],
+            "human": md.get("human") or "",
+            "assignee": bd.get("owner") or md.get("assignee") or None,
+        }
+        tasks.append(task)
+        id_map_out[t_id] = bd_id
+
+    return tasks, id_map_out
 
 
 def _events_from_beads(data: dict) -> list[dict]:
@@ -271,27 +335,40 @@ def main() -> None:
 
     print("\n  Render — loading task data...\n")
 
-    tasks = load_tasks_md()
-    if not tasks:
-        print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
-        sys.exit(1)
-
-    print(f"  {len(tasks)} task(s) loaded from TASKS.md")
-
     ws_scopes = load_workstream_scopes()
     if ws_scopes:
         print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
 
-    id_map: dict[str, str] = {}
+    beads_state: dict[str, dict] = {}
+
     if BEADS_MAP_FILE.exists():
-        id_map = json.loads(BEADS_MAP_FILE.read_text())
-        print(f"  {len(id_map)} BEADS ID(s) found — querying live status...")
-        beads_state = load_beads_state(id_map)
-        live = sum(1 for v in beads_state.values() if v)
-        print(f"  {live}/{len(id_map)} BEADS task(s) fetched\n")
+        id_map_file: dict[str, str] = json.loads(BEADS_MAP_FILE.read_text())
+        inverted = {v: k for k, v in id_map_file.items()}
+
+        print("  Loading all tasks from BEADS (bd list)...")
+        beads_all = load_beads_all()
+
+        if beads_all:
+            tasks_md = {t["id"]: t for t in load_tasks_md()}
+            tasks, effective_id_map = merge_beads_with_md(beads_all, inverted, tasks_md)
+            print(f"  {len(tasks)} task(s) from BEADS")
+            print(f"  Fetching detailed event timestamps (bd show)...")
+            beads_state = load_beads_state(effective_id_map)
+            live = sum(1 for v in beads_state.values() if v)
+            print(f"  {live}/{len(tasks)} BEADS task(s) fetched\n")
+        else:
+            print("  bd list returned no tasks — falling back to TASKS.md\n")
+            tasks = load_tasks_md()
+            if not tasks:
+                print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
+                sys.exit(1)
     else:
-        print("  No .beads_map.json — using static status from TASKS.md\n")
-        beads_state = {}
+        print("  No .beads_map.json — loading tasks from TASKS.md\n")
+        tasks = load_tasks_md()
+        if not tasks:
+            print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
+            sys.exit(1)
+        print(f"  {len(tasks)} task(s) loaded from TASKS.md\n")
 
     write_data_ts(tasks, beads_state, ws_scopes)
 
