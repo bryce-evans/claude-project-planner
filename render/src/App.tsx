@@ -150,6 +150,12 @@ function SField({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
+function validateEstimate(s: string): boolean {
+  const t = s.trim().toLowerCase();
+  if (t === "") return true;
+  return /^\d+(\.\d+)?[hdw]$/.test(t);
+}
+
 function SelectionPanel({
   task,
   workstreams,
@@ -162,7 +168,8 @@ function SelectionPanel({
   onUpdate: (beadsId: string, field: string, value: string) => void;
 }) {
   const [estimateInput, setEstimateInput] = useState(task.estimate);
-  useEffect(() => setEstimateInput(task.estimate), [task.estimate]);
+  const [estimateError, setEstimateError] = useState(false);
+  useEffect(() => { setEstimateInput(task.estimate); setEstimateError(false); }, [task.estimate]);
 
   const canonicalStatus = STATUS_OPTIONS.find((o) => {
     if (task.status === "done" || task.status === "closed") return o.value === "closed";
@@ -221,8 +228,12 @@ function SelectionPanel({
       <SField label="Estimate">
         <input
           value={estimateInput}
-          onChange={(e) => setEstimateInput(e.target.value)}
+          onChange={(e) => { setEstimateInput(e.target.value); setEstimateError(false); }}
           onBlur={() => {
+            if (!validateEstimate(estimateInput)) {
+              setEstimateError(true);
+              return;
+            }
             if (estimateInput !== task.estimate) {
               onUpdate(task.beadsId, "estimate", estimateInput);
             }
@@ -231,8 +242,11 @@ function SelectionPanel({
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
           placeholder="2h, 1d, 1w"
-          style={CTRL_STYLE}
+          style={{ ...CTRL_STYLE, borderColor: estimateError ? "#ef4444" : "#334155" }}
         />
+        {estimateError && (
+          <span style={{ fontSize: 9, color: "#ef4444" }}>Use h, d, or w — e.g. 2h, 1d, 1w</span>
+        )}
       </SField>
 
       <SField label="Workstream">
