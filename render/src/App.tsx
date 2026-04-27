@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,7 +11,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
-import { tasks, generatedAt, workstreamScopes } from "./generated/tasks";
+import { tasks, generatedAt, workstreamScopes, workstreamOwners } from "./generated/tasks";
 import TaskNode from "./TaskNode";
 import type { Task, TaskStatus } from "./types";
 import { STATUS_COLOR, relativeTime } from "./utils";
@@ -19,7 +19,7 @@ import { STATUS_COLOR, relativeTime } from "./utils";
 const NODE_W = 224;
 const NODE_H = 148;
 
-function buildGraph(tasks: Task[]): { nodes: Node[]; edges: Edge[] } {
+function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Node[]; edges: Edge[] } {
   const g = new Dagre.graphlib.Graph();
   g.setGraph({ rankdir: "LR", nodesep: 48, ranksep: 96, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
@@ -43,12 +43,11 @@ function buildGraph(tasks: Task[]): { nodes: Node[]; edges: Edge[] } {
 
   const nodes: Node[] = tasks.map((t) => {
     const pos = g.node(t.id);
-    const wsId = t.workstream.split("—")[0].trim();
     return {
       id: t.id,
       type: "taskNode",
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { ...t, wsColor: WS_COLOR[wsId] ?? "#334155" },
+      data: { ...t, wsColor: taskColor(t, mode) },
     };
   });
 
@@ -151,7 +150,7 @@ function StatPill({
   );
 }
 
-const WS_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
+const COLOR_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
 
 // Derive unique workstreams in order of first appearance
 const WORKSTREAMS: { id: string; full: string; name: string; color: string }[] = Array.from(
@@ -160,20 +159,51 @@ const WORKSTREAMS: { id: string; full: string; name: string; color: string }[] =
   id,
   full,
   name: full.includes("—") ? full.split("—")[1].trim() : full,
-  color: WS_PALETTE[i % WS_PALETTE.length],
+  color: COLOR_PALETTE[i % COLOR_PALETTE.length],
 }));
 
 const WS_COLOR: Record<string, string> = Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color]));
 
+// Derive unique owners and assign colors
+const UNIQUE_OWNERS = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[]));
+const OWNER_COLOR: Record<string, string> = Object.fromEntries(
+  UNIQUE_OWNERS.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]])
+);
+
+type ColorMode = "workstream" | "owner";
+
+function taskColor(task: Task, mode: ColorMode): string {
+  if (mode === "owner") {
+    return task.assignee ? (OWNER_COLOR[task.assignee] ?? "#334155") : "#334155";
+  }
+  const wsId = task.workstream.split("—")[0].trim();
+  return WS_COLOR[wsId] ?? "#334155";
+}
+
 export default function App() {
+  const [colorMode, setColorMode] = useState<ColorMode>("workstream");
+  const [previewMode, setPreviewMode] = useState<ColorMode | null>(null);
+  const activeMode = previewMode ?? colorMode;
+
   const { nodes: initNodes, edges: initEdges } = useMemo(
-    () => buildGraph(tasks),
+    () => buildGraph(tasks, colorMode),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
   const [edges, , onEdgesChange] = useEdgesState(initEdges);
   const [hoveredWs, setHoveredWs] = useState<string | null>(null);
   const [expandedWs, setExpandedWs] = useState<string | null>(null);
+
+  // Recolor nodes whenever the active color mode changes
+  useEffect(() => {
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        data: { ...n.data, wsColor: taskColor(n.data as Task, activeMode) },
+      }))
+    );
+  }, [activeMode, setNodes]);
 
   const byStatus = useCallback(
     (s: TaskStatus) => tasks.filter((t) => t.status === s).length,
@@ -278,21 +308,31 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Assignees */}
-                  <div>
-                    <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
-                      Assigned to
+                  {/* Owner */}
+                  {workstreamOwners[ws.id] && (
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                        Owner
+                      </div>
+                      <div style={{ fontSize: 10, color: ws.color, fontWeight: 600 }}>
+                        {workstreamOwners[ws.id]}
+                      </div>
                     </div>
-                    {stats.assignees.length > 0 ? (
-                      stats.assignees.map((a) => (
+                  )}
+
+                  {/* Assignees (all task-level assignees) */}
+                  {stats.assignees.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                        On this workstream
+                      </div>
+                      {stats.assignees.map((a) => (
                         <div key={a} style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
-                          <span>👤</span> {a}
+                          <span style={{ color: OWNER_COLOR[a] ?? ws.color }}>●</span> {a}
                         </div>
-                      ))
-                    ) : (
-                      <div style={{ fontSize: 10, color: "#334155", fontStyle: "italic" }}>Unassigned</div>
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Progress bar */}
                   <div>
@@ -376,9 +416,39 @@ export default function App() {
         <StatPill label="Blocked" value={blocked} color={blocked > 0 ? "#ef4444" : "#64748b"} />
         <StatPill label="Human steps" value={humanSteps} color="#f59e0b" />
 
+        {/* Color mode toggle */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+            Color by
+          </span>
+          <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
+            {(["workstream", "owner"] as const).map((mode) => (
+              <button
+                key={mode}
+                onMouseEnter={() => setPreviewMode(mode)}
+                onMouseLeave={() => setPreviewMode(null)}
+                onClick={() => setColorMode(mode)}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 4,
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  transition: "background 0.12s, color 0.12s",
+                  background: colorMode === mode ? "#334155" : "transparent",
+                  color: colorMode === mode ? "#f1f5f9" : "#64748b",
+                }}
+              >
+                {mode === "workstream" ? "Workstream" : "Owner"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {generatedAt && (
-          <span style={{ marginLeft: "auto", fontSize: 10, color: "#334155" }}>
-            Last updated {relativeTime(generatedAt)}
+          <span style={{ fontSize: 10, color: "#334155" }}>
+            {relativeTime(generatedAt)}
           </span>
         )}
       </div>

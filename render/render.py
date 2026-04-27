@@ -28,19 +28,40 @@ DATA_FILE = GENERATED_DIR / "tasks.ts"
 # PLAN.md workstream scopes (optional supplement)
 # ---------------------------------------------------------------------------
 
-def load_workstream_scopes() -> dict[str, str]:
-    """Return {WS_ID: scope_description} parsed from PLAN.md Workstreams table."""
+def load_workstream_meta() -> tuple[dict[str, str], dict[str, str]]:
+    """Return ({WS_ID: scope}, {WS_ID: owner}) parsed from PLAN.md Workstreams table."""
     import re
     if not PLAN_MD.exists():
-        return {}
+        return {}, {}
     content = PLAN_MD.read_text()
     scopes: dict[str, str] = {}
-    for m in re.finditer(r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|", content, re.MULTILINE):
+    owners: dict[str, str] = {}
+
+    # 5-column: | WS1 | Name | Scope | Owner | Status |
+    for m in re.finditer(
+        r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*\w+\s*\|",
+        content, re.MULTILINE,
+    ):
         ws_id = m.group(1).strip()
         scope = m.group(2).strip()
+        owner = m.group(3).strip()
         if scope and scope.lower() not in ("scope", "---", ""):
             scopes[ws_id] = scope
-    return scopes
+        if owner and owner.lower() not in ("owner", "---", ""):
+            owners[ws_id] = owner
+
+    # 4-column fallback: | WS1 | Name | Scope | Status |
+    if not scopes:
+        for m in re.finditer(
+            r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*\w+\s*\|",
+            content, re.MULTILINE,
+        ):
+            ws_id = m.group(1).strip()
+            scope = m.group(2).strip()
+            if scope and scope.lower() not in ("scope", "---", ""):
+                scopes[ws_id] = scope
+
+    return scopes, owners
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +158,7 @@ def build_tasks(beads_detail: list[dict]) -> list[dict]:
             "depends": depends,
             "unlocks": [],  # filled in below
             "human": meta.get("human_required") or "",
-            "assignee": bd.get("owner") or None,
+            "assignee": bd.get("assignee") or None,
             "events": _events_from_beads(bd),
         })
 
@@ -175,7 +196,11 @@ def _ts_events(events: list[dict]) -> str:
     return "[\n    " + ",\n    ".join(items) + "\n  ]"
 
 
-def write_data_ts(tasks: list[dict], ws_scopes: dict[str, str] | None = None) -> None:
+def write_data_ts(
+    tasks: list[dict],
+    ws_scopes: dict[str, str] | None = None,
+    ws_owners: dict[str, str] | None = None,
+) -> None:
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -194,6 +219,12 @@ def write_data_ts(tasks: list[dict], ws_scopes: dict[str, str] | None = None) ->
         lines.append(f'export const workstreamScopes: Record<string, string> = {{ {scope_entries} }}')
     else:
         lines.append('export const workstreamScopes: Record<string, string> = {}')
+
+    if ws_owners:
+        owner_entries = ", ".join(f'"{k}": {_ts_string(v)}' for k, v in ws_owners.items())
+        lines.append(f'export const workstreamOwners: Record<string, string> = {{ {owner_entries} }}')
+    else:
+        lines.append('export const workstreamOwners: Record<string, string> = {}')
     lines.append("")
 
     lines.append("export const tasks: Task[] = [")
@@ -246,9 +277,11 @@ def main() -> None:
 
     print("\n  Render — loading task data...\n")
 
-    ws_scopes = load_workstream_scopes()
+    ws_scopes, ws_owners = load_workstream_meta()
     if ws_scopes:
         print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
+    if ws_owners:
+        print(f"  {len(ws_owners)} workstream owner(s) loaded from PLAN.md")
 
     print("  Loading tasks from BEADS (bd list)...")
     beads_list = load_beads_all()
@@ -263,7 +296,7 @@ def main() -> None:
     tasks = build_tasks(beads_detail)
     print(f"  {len(tasks)} task(s) built\n")
 
-    write_data_ts(tasks, ws_scopes)
+    write_data_ts(tasks, ws_scopes, ws_owners)
 
     if data_only:
         print("\n  Done (data only). Open the render app manually.\n")

@@ -103,24 +103,47 @@ def ensure_me_md(ws_label: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def load_workstreams() -> list[dict]:
-    """Parse the workstream summary table from PLAN.md."""
+    """Parse the workstream summary table from PLAN.md.
+
+    Supports both 4-column (legacy: ID|Name|Scope|Status) and
+    5-column (ID|Name|Scope|Owner|Status) formats.
+    """
     if not PLAN_MD.exists():
         return []
 
     content = PLAN_MD.read_text()
     workstreams = []
 
-    # Match rows in the | WS1 | Name | Scope | Status | table
-    pattern = re.compile(r"^\|\s*(WS\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(\w+)\s*\|", re.MULTILINE)
-    for m in pattern.finditer(content):
-        workstreams.append(
-            {
+    # 5-column: | WS1 | Name | Scope | Owner | Status |
+    pattern5 = re.compile(
+        r"^\|\s*(WS\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|",
+        re.MULTILINE,
+    )
+    # 4-column: | WS1 | Name | Scope | Status |
+    pattern4 = re.compile(
+        r"^\|\s*(WS\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(\w+)\s*\|",
+        re.MULTILINE,
+    )
+
+    for m in pattern5.finditer(content):
+        workstreams.append({
+            "id": m.group(1),
+            "name": m.group(2).strip(),
+            "scope": m.group(3).strip(),
+            "owner": m.group(4).strip(),
+            "status": m.group(5).strip(),
+        })
+
+    if not workstreams:
+        for m in pattern4.finditer(content):
+            workstreams.append({
                 "id": m.group(1),
                 "name": m.group(2).strip(),
                 "scope": m.group(3).strip(),
+                "owner": "",
                 "status": m.group(4).strip(),
-            }
-        )
+            })
+
     return workstreams
 
 

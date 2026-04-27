@@ -2,8 +2,8 @@
 
 ## Workstreams
 
-| Workstream | Description | Owner | Status |
-|------------|-------------|-------|--------|
+| ID | Name | Scope | Owner | Status |
+|----|------|-------|-------|--------|
 | _TODO_ | | | |
 
 ## Tasks
