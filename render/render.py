@@ -28,23 +28,10 @@ JSON_FILE = PUBLIC_DIR / "tasks.json"
 # BEADS
 # ---------------------------------------------------------------------------
 
-def _bd_show(bd_id: str) -> dict | None:
-    result = subprocess.run(
-        ["bd", "show", bd_id, "--json"], capture_output=True, text=True
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    try:
-        data = json.loads(result.stdout)
-        return data[0] if isinstance(data, list) else data
-    except json.JSONDecodeError:
-        return None
-
-
 def load_beads_all() -> list[dict]:
-    """Load all tasks from BEADS (all statuses) via bd list --json."""
+    """Load all tasks with full metadata in a single bd list --long --json call."""
     result = subprocess.run(
-        ["bd", "list", "--status", "open,in_progress,blocked,closed", "--json"],
+        ["bd", "list", "--status", "open,in_progress,blocked,closed", "--long", "--json"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -54,15 +41,6 @@ def load_beads_all() -> list[dict]:
         return data if isinstance(data, list) else []
     except json.JSONDecodeError:
         return []
-
-
-def load_beads_detail(beads_list: list[dict]) -> list[dict]:
-    """Fetch full detail (metadata, timestamps) for each task via bd show."""
-    detailed: list[dict] = []
-    for t in beads_list:
-        detail = _bd_show(t["id"])
-        detailed.append(detail if detail else t)
-    return detailed
 
 
 def _events_from_beads(data: dict) -> list[dict]:
@@ -296,17 +274,14 @@ def main() -> None:
 
     print("\n  Render — loading task data...\n")
 
-    print("  Loading tasks from BEADS (bd list)...")
+    print("  Loading tasks from BEADS...")
     beads_list = load_beads_all()
 
     if not beads_list:
         print("  ERROR: bd list returned no tasks. Is BEADS set up for this project?\n")
         sys.exit(1)
 
-    print(f"  {len(beads_list)} task(s) found — fetching detail (bd show)...")
-    beads_detail = load_beads_detail(beads_list)
-
-    tasks = build_tasks(beads_detail)
+    tasks = build_tasks(beads_list)
     ws_scopes, ws_owners = extract_workstream_meta(tasks)
     print(f"  {len(tasks)} task(s) built\n")
 
