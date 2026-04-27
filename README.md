@@ -21,7 +21,7 @@ execution state visible to the whole team in real time.
 |-----------|-----------|--------|
 | **boilerplate** | `boilerplate/` | Markdown templates copied into every new project |
 | **planning** | `planning/` | Interactive CLI: project → plan → tasks |
-| **render** | `render/` | Live browser flowchart of task execution (copied into each project by setup) |
+| **render** | [beads-render](https://github.com/bryce-evans/beads-render) | Live browser flowchart of task execution (separate repo) |
 
 ---
 
@@ -131,122 +131,17 @@ Start with all P0 tasks. Update status in BEADS as you go (`bd update <id> --cla
 
 ---
 
-### Phase 5 — Render (`render/render.py`)
+### Phase 5 — Render
 
-Live browser flowchart of the full task graph. Reads task status exclusively from BEADS — all metadata (workstream, owner, dependencies, estimates) must be in BEADS before rendering.
-
-#### Dev mode
+Live browser flowchart of the full task graph. Moved to its own repo: **[beads-render](https://github.com/bryce-evans/beads-render)**.
 
 ```sh
-./render/render.py          # generate data + open dev server at localhost:5173
-./render/render.py --data   # generate data file only, no server
+git clone https://github.com/bryce-evans/beads-render.git
+cd beads-render
+./render.py   # generate data + open dev server at localhost:5173
 ```
 
-Writes two data files:
-- `render/src/generated/tasks.ts` — used by the Vite dev server
-- `render/public/tasks.json` — fetched at runtime by the built app
-
-**First run:** `npm install` runs automatically inside `render/`.
-
-**Task editing in dev mode** requires the Python server running alongside Vite (Vite proxies `POST /task/update` to `:8080`):
-
-```sh
-# Terminal 1
-./render/render.py --data
-python3 render/server.py --port 8080
-
-# Terminal 2
-cd render && npm run dev
-```
-
-#### Production (static server + live updates)
-
-Build the app once, then run the server:
-
-```sh
-cd render && npm run build
-python render/server.py --port 8080 --secret YOUR_WEBHOOK_SECRET
-```
-
-The server:
-- Serves the built `dist/` directory as static files
-- Intercepts `GET /tasks.json` directly from `public/tasks.json` (always fresh, bypasses the build)
-- Handles `POST /webhook` — runs `bd dolt pull && python render.py --data` on each push event
-
-The browser app polls `/tasks.json` every 30 seconds and rebuilds the graph when `generatedAt` changes.
-
-#### GitHub webhook setup
-
-In your repo: Settings → Webhooks → Add webhook:
-
-| Field | Value |
-|-------|-------|
-| Payload URL | `https://your-host/webhook` |
-| Content type | `application/json` |
-| Secret | same value as `--secret` |
-| Events | "Just the push event" |
-
-Workers push task updates to BEADS (`bd close <id> && bd dolt push && git push`), GitHub fires the webhook, and the dashboard updates within 30 seconds.
-
-#### Env var alternative
-
-```sh
-WEBHOOK_SECRET=your-secret PORT=8080 python render/server.py
-```
-
----
-
-#### Render layouts
-
-The dashboard has two view modes (**Graph** and **Gantt**) and three color modes (**Workstream**, **Owner**, **Status**). The left sidebar always matches the active color mode.
-
-##### Graph view — Color by Workstream
-
-![Graph view colored by workstream](docs/render-graph-workstream.png)
-
-Node dependency graph with a directed acyclic layout (dagre). Each node is colored by its workstream. The left sidebar lists workstreams — click to expand and see scope, owner, assignees, and per-task progress. Hover a workstream to highlight all its nodes.
-
-##### Graph view — Color by Owner
-
-![Graph view colored by owner](docs/render-graph-owner.png)
-
-Same DAG, nodes recolored by assignee. The sidebar switches to an owner list with done/total counts, estimated hours remaining, and a breakdown of which workstreams each owner is active in. An `(unassigned)` row appears when any task has no assignee.
-
-##### Graph view — Color by Status
-
-![Graph view colored by status](docs/render-graph-status.png)
-
-Nodes colored by execution status: open (gray), in progress (blue), in review (amber), blocked (red), done (green), deferred (purple). The sidebar shows each status group with task count and a proportional fill bar. Tasks requiring human action are flagged ⚠️ on the node.
-
-##### Gantt view — Color by Workstream
-
-![Gantt view colored by workstream](docs/render-gantt-workstream.png)
-
-Horizontal timeline where each row is a workstream. Bar position is computed by topological longest-path scheduling — a task starts only after all its dependencies finish. Tasks that can run in parallel within the same row are stacked into separate lanes (no bars ever overlap). Hover any bar for a tooltip with estimate, assignee, status, and dependency list.
-
-##### Gantt view — Color by Owner
-
-![Gantt view colored by owner](docs/render-gantt-owner.png)
-
-Same timeline with one row per owner. Useful for spotting bottlenecks: a single owner with a deep dependency chain shows as a long, narrow stack of lanes while parallelizable work fans out into multiple lanes.
-
-##### Gantt view — Color by Status
-
-![Gantt view colored by status](docs/render-gantt-status.png)
-
-Timeline grouped by status bucket. Done tasks are dimmed (60% opacity with a ✓ badge); blocked tasks are outlined in red. Quickly shows whether in-progress work is gating anything downstream.
-
-##### Sidebar — Workstream expanded
-
-![Sidebar with WS1 expanded](docs/render-sidebar-workstream.png)
-
-Clicking a workstream row in the sidebar expands it to show scope, owner, per-assignee breakdowns, and individual task status. All nodes in that workstream are highlighted in the graph simultaneously.
-
-##### Sidebar — Status mode
-
-![Sidebar in status mode](docs/render-sidebar-status.png)
-
-Status sidebar with color-coded groups, task counts, and proportional fill bars for at-a-glance progress. Each bar width represents that group's share of total tasks.
+See the [beads-render README](https://github.com/bryce-evans/beads-render#readme) for full setup, webhook, and editing docs.
 
 ---
 
