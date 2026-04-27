@@ -97,9 +97,9 @@ The script walks through **8 steps**:
 | **3. Confirm tech stack** | Review each recommendation — accept or override per component |
 | **4. Generate `ARCHITECTURE.md`** | Claude writes component boundaries, directory layout, and interfaces from the agreed stack |
 | **5. Re-iterate** | Claude reviews the full plan and surfaces: gaps (things not considered), alternatives (trade-offs worth weighing), and clarifications (questions about your reasoning). Each can be skipped or answered — responses are saved to `PROJECT.md` |
-| **6. Workstreams** | Specify a count (e.g. 3 for a 3-person team) or let Claude recommend. Claude names each workstream with a memorable codename (`Keymaster` for auth, `Dazzler` for frontend, `Bedrock` for DB). Scope is defined per workstream. Tasks are broken out per stream |
+| **6. Workstreams** | Specify a count (e.g. 3 for a 3-person team) or let Claude recommend. Claude names each workstream with a memorable codename (`Keymaster` for auth, `Dazzler` for frontend, `Bedrock` for DB). Each workstream gets a scope and an **owner** (name or email). Tasks default to that owner as assignee — individuals can pick up tasks across streams. Written to `PLAN.md` |
 | **7. Task manifest → `TASKS.md`** | Claude generates the full task graph across all workstreams, with cross-workstream dependencies. Every task has all 14 fields filled (see schema below). Required fields are validated — blank ones are flagged for your input |
-| **8. Push to BEADS** | (Optional) Pushes all tasks to [BEADS](https://github.com/gastownhall/beads) via `bd create` and links dependencies with `bd dep add`. Writes `.beads_map.json` for the execute step |
+| **8. Push to BEADS** | (Optional) Pushes all tasks to [BEADS](https://github.com/gastownhall/beads) via `bd create` and links dependencies with `bd dep add`. Sets all metadata (workstream, owner, scope, estimate, depends) on each BEADS issue. Writes `.beads_map.json`. Run `migrate_to_beads_metadata.py` to backfill an existing BEADS project |
 
 ---
 
@@ -133,22 +133,63 @@ Start with all P0 tasks. Update status in BEADS as you go (`bd update <id> --cla
 
 ### Phase 5 — Render (`render/render.py`)
 
-Live browser flowchart of the full task graph. `render/render.py` is copied into your project by `setup.py` — run it from your project root:
+Live browser flowchart of the full task graph. Reads task status exclusively from BEADS — all metadata (workstream, owner, dependencies, estimates) must be in BEADS before rendering.
+
+#### Dev mode
 
 ```sh
 python render/render.py          # generate data + open dev server at localhost:5173
 python render/render.py --data   # generate data file only, no server
 ```
 
-- Reads live task status from BEADS (`bd show --json`)
-- Falls back to `TASKS.md` status if BEADS is not set up
-- Writes `render/src/generated/tasks.ts` and starts the Vite dev server
+Writes two data files:
+- `render/src/generated/tasks.ts` — used by the Vite dev server
+- `render/public/tasks.json` — fetched at runtime by the built app
 
 **First run:** `npm install` runs automatically inside `render/`.
 
+#### Production (static server + live updates)
+
+Build the app once, then run the server:
+
+```sh
+cd render && npm run build
+python render/server.py --port 8080 --secret YOUR_WEBHOOK_SECRET
+```
+
+The server:
+- Serves the built `dist/` directory as static files
+- Intercepts `GET /tasks.json` directly from `public/tasks.json` (always fresh, bypasses the build)
+- Handles `POST /webhook` — runs `bd dolt pull && python render.py --data` on each push event
+
+The browser app polls `/tasks.json` every 30 seconds and rebuilds the graph when `generatedAt` changes.
+
+#### GitHub webhook setup
+
+In your repo: Settings → Webhooks → Add webhook:
+
+| Field | Value |
+|-------|-------|
+| Payload URL | `https://your-host/webhook` |
+| Content type | `application/json` |
+| Secret | same value as `--secret` |
+| Events | "Just the push event" |
+
+Workers push task updates to BEADS (`bd close <id> && bd dolt push && git push`), GitHub fires the webhook, and the dashboard updates within 30 seconds.
+
+#### Env var alternative
+
+```sh
+WEBHOOK_SECRET=your-secret PORT=8080 python render/server.py
+```
+
+---
+
 ![Project flow overview showing all workstreams and task dependency graph](docs/render-overview.png)
 
-The left sidebar shows each workstream with task counts and hours. Expand a workstream to see its scope, assignees, and progress. Hovering highlights all tasks in that workstream.
+The left sidebar shows each workstream with task counts and hours. Expand a workstream to see its scope, owner, assignees, and progress. Hovering highlights all tasks in that workstream.
+
+Nodes can be colored by **workstream** or **owner** — hover the "Color by" toggle to preview, click to lock.
 
 ![Close-up of a human-required task with warning callout](docs/render-human-required.png)
 
@@ -170,12 +211,14 @@ Required fields (blank = validation error, user is prompted to fill): `ID`, `wor
 |------|--------------|-------------|
 | `PROJECT.md` | `plan.py` + user | `plan.py` (resuming), Claude |
 | `ARCHITECTURE.md` | `plan.py` | Claude (via CLAUDE.md) |
-| `PLAN.md` | `plan.py` | Claude, team |
-| `TASKS.md` | `plan.py` | `start.py`, `render.py`, Claude |
+| `PLAN.md` | `plan.py` | `start.py`, Claude, team |
+| `TASKS.md` | `plan.py` | `start.py`, Claude |
 | `WORKSTREAM.md` | `start.py` | Claude (first thing, every session) |
 | `CLAUDE.md` | boilerplate | Claude (auto-loaded) |
-| `.beads_map.json` | `plan.py` | `render.py` |
-| `render/src/generated/tasks.ts` | `render.py` | React app |
+| `.beads_map.json` | `plan.py` | `migrate_to_beads_metadata.py` |
+| `render/src/generated/tasks.ts` | `render.py` | React app (dev mode) |
+| `render/public/tasks.json` | `render.py` | React app (production, polled every 30s) |
+| BEADS issues + metadata | `plan.py`, `migrate_to_beads_metadata.py` | `render.py` (exclusively) |
 
 ---
 
