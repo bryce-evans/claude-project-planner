@@ -188,6 +188,15 @@ export default function App() {
 
   const [hoveredWs, setHoveredWs] = useState<string | null>(null);
   const [expandedWs, setExpandedWs] = useState<string | null>(null);
+  const [expandedOwner, setExpandedOwner] = useState<string | null>(null);
+
+  const OWNERS = useMemo(() =>
+    Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[])).map((owner, i) => ({
+      id: owner,
+      color: OWNER_COLOR[owner] ?? COLOR_PALETTE[i % COLOR_PALETTE.length],
+    })),
+    [tasks, OWNER_COLOR]
+  );
 
   // Recolor nodes when color mode changes
   useEffect(() => {
@@ -210,6 +219,20 @@ export default function App() {
       hoursCompleted: done.reduce((s, t) => s + parseHours(t.estimate), 0),
       hoursRemaining: remaining.reduce((s, t) => s + parseHours(t.estimate), 0),
       assignees,
+    };
+  }, [tasks]);
+
+  const ownerStats = useCallback((owner: string) => {
+    const ownerTasks = tasks.filter((t) => t.assignee === owner);
+    const done = ownerTasks.filter((t) => DONE_STATUSES.has(t.status));
+    const remaining = ownerTasks.filter((t) => !DONE_STATUSES.has(t.status));
+    const streams = Array.from(new Set(ownerTasks.map((t) => t.workstream.split("—")[0].trim())));
+    return {
+      total: ownerTasks.length,
+      doneCount: done.length,
+      hoursCompleted: done.reduce((s, t) => s + parseHours(t.estimate), 0),
+      hoursRemaining: remaining.reduce((s, t) => s + parseHours(t.estimate), 0),
+      streams,
     };
   }, [tasks]);
 
@@ -239,6 +262,19 @@ export default function App() {
     [setNodes]
   );
 
+  const handleOwnerHover = useCallback(
+    (owner: string | null) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const task = n.data as Task;
+          const dimmed = owner !== null && task.assignee !== owner;
+          return { ...n, data: { ...task, dimmed } };
+        })
+      );
+    },
+    [setNodes]
+  );
+
   if (!tasks.length) {
     return (
       <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -249,7 +285,7 @@ export default function App() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex" }}>
-      {/* Workstream sidebar */}
+      {/* Sidebar — workstreams or owners depending on color mode */}
       <div
         style={{
           width: 200,
@@ -264,128 +300,232 @@ export default function App() {
         }}
       >
         <div style={{ padding: "10px 14px 6px", fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          Workstreams
+          {activeMode === "owner" ? "Owners" : "Workstreams"}
         </div>
-        {WORKSTREAMS.map((ws) => {
-          const isHovered = hoveredWs === ws.id;
-          const isExpanded = expandedWs === ws.id;
-          const stats = wsStats(ws.id);
 
-          return (
-            <div key={ws.id}>
-              <div
-                onMouseEnter={() => handleWsHover(ws.id)}
-                onMouseLeave={() => handleWsHover(null)}
-                onClick={() => setExpandedWs(isExpanded ? null : ws.id)}
-                style={{
-                  padding: "9px 14px",
-                  cursor: "pointer",
-                  background: isHovered || isExpanded ? `${ws.color}18` : "transparent",
-                  borderLeft: `3px solid ${isHovered || isExpanded ? ws.color : "transparent"}`,
-                  transition: "background 0.12s, border-color 0.12s",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: ws.color, letterSpacing: "0.05em" }}>
-                    {ws.id}
-                  </span>
-                  <span style={{ fontSize: 9, color: "#475569", transition: "transform 0.15s", display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none" }}>
-                    ▶
-                  </span>
-                </div>
-                <span style={{ fontSize: 11, fontWeight: 600, color: isHovered || isExpanded ? "#f1f5f9" : "#94a3b8" }}>
-                  {ws.name}
-                </span>
-                <span style={{ fontSize: 9, color: "#475569" }}>
-                  {stats.doneCount}/{stats.total} done
-                </span>
-              </div>
-
-              {isExpanded && (
+        {activeMode === "owner" ? (
+          /* ── Owner list ── */
+          OWNERS.map((o) => {
+            const isExpanded = expandedOwner === o.id;
+            const stats = ownerStats(o.id);
+            return (
+              <div key={o.id}>
                 <div
+                  onMouseEnter={() => handleOwnerHover(o.id)}
+                  onMouseLeave={() => handleOwnerHover(null)}
+                  onClick={() => setExpandedOwner(isExpanded ? null : o.id)}
                   style={{
-                    background: `${ws.color}0d`,
-                    borderLeft: `3px solid ${ws.color}44`,
-                    padding: "10px 14px 12px",
+                    padding: "9px 14px",
+                    cursor: "pointer",
+                    background: isExpanded ? `${o.color}18` : "transparent",
+                    borderLeft: `3px solid ${isExpanded ? o.color : "transparent"}`,
+                    transition: "background 0.12s, border-color 0.12s",
                     display: "flex",
                     flexDirection: "column",
-                    gap: 10,
+                    gap: 2,
                   }}
                 >
-                  {workstreamScopes[ws.id] && (
-                    <div style={{ fontSize: 9, color: "#64748b", lineHeight: 1.5 }}>
-                      {workstreamScopes[ws.id]}
-                    </div>
-                  )}
-
-                  {workstreamOwners[ws.id] && (
-                    <div>
-                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
-                        Owner
-                      </div>
-                      <div style={{ fontSize: 10, color: ws.color, fontWeight: 600 }}>
-                        {workstreamOwners[ws.id]}
-                      </div>
-                    </div>
-                  )}
-
-                  {stats.assignees.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
-                        On this workstream
-                      </div>
-                      {stats.assignees.map((a) => (
-                        <div key={a} style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ color: OWNER_COLOR[a] ?? ws.color }}>●</span> {a}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div>
-                    <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
-                      Progress
-                    </div>
-                    <div style={{ height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
-                      <div style={{
-                        height: "100%",
-                        width: `${stats.total ? (stats.doneCount / stats.total) * 100 : 0}%`,
-                        background: ws.color,
-                        borderRadius: 2,
-                        transition: "width 0.3s",
-                      }} />
-                    </div>
-                    <div style={{ marginTop: 3, fontSize: 9, color: "#475569" }}>
-                      {stats.doneCount} of {stats.total} tasks
-                    </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: isExpanded ? "#f1f5f9" : "#94a3b8" }}>
+                      {o.id}
+                    </span>
+                    <span style={{ fontSize: 9, color: "#475569", transition: "transform 0.15s", display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none" }}>
+                      ▶
+                    </span>
                   </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
-                        Completed
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e" }}>
-                        {fmtHours(stats.hoursCompleted)}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
-                        Remaining
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: ws.color }}>
-                        {fmtHours(stats.hoursRemaining)}
-                      </div>
-                    </div>
-                  </div>
+                  <span style={{ fontSize: 9, color: "#475569" }}>
+                    {stats.doneCount}/{stats.total} done
+                  </span>
                 </div>
-              )}
-            </div>
-          );
-        })}
+
+                {isExpanded && (
+                  <div
+                    style={{
+                      background: `${o.color}0d`,
+                      borderLeft: `3px solid ${o.color}44`,
+                      padding: "10px 14px 12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    {stats.streams.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                          Workstreams
+                        </div>
+                        {stats.streams.map((ws) => (
+                          <div key={ws} style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ color: WS_COLOR[ws] ?? o.color }}>●</span> {ws}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
+                        Progress
+                      </div>
+                      <div style={{ height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{
+                          height: "100%",
+                          width: `${stats.total ? (stats.doneCount / stats.total) * 100 : 0}%`,
+                          background: o.color,
+                          borderRadius: 2,
+                          transition: "width 0.3s",
+                        }} />
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: 9, color: "#475569" }}>
+                        {stats.doneCount} of {stats.total} tasks
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                          Completed
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e" }}>
+                          {fmtHours(stats.hoursCompleted)}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                          Remaining
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: o.color }}>
+                          {fmtHours(stats.hoursRemaining)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          /* ── Workstream list ── */
+          WORKSTREAMS.map((ws) => {
+            const isHovered = hoveredWs === ws.id;
+            const isExpanded = expandedWs === ws.id;
+            const stats = wsStats(ws.id);
+
+            return (
+              <div key={ws.id}>
+                <div
+                  onMouseEnter={() => handleWsHover(ws.id)}
+                  onMouseLeave={() => handleWsHover(null)}
+                  onClick={() => setExpandedWs(isExpanded ? null : ws.id)}
+                  style={{
+                    padding: "9px 14px",
+                    cursor: "pointer",
+                    background: isHovered || isExpanded ? `${ws.color}18` : "transparent",
+                    borderLeft: `3px solid ${isHovered || isExpanded ? ws.color : "transparent"}`,
+                    transition: "background 0.12s, border-color 0.12s",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: ws.color, letterSpacing: "0.05em" }}>
+                      {ws.id}
+                    </span>
+                    <span style={{ fontSize: 9, color: "#475569", transition: "transform 0.15s", display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none" }}>
+                      ▶
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: isHovered || isExpanded ? "#f1f5f9" : "#94a3b8" }}>
+                    {ws.name}
+                  </span>
+                  <span style={{ fontSize: 9, color: "#475569" }}>
+                    {stats.doneCount}/{stats.total} done
+                  </span>
+                </div>
+
+                {isExpanded && (
+                  <div
+                    style={{
+                      background: `${ws.color}0d`,
+                      borderLeft: `3px solid ${ws.color}44`,
+                      padding: "10px 14px 12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    {workstreamScopes[ws.id] && (
+                      <div style={{ fontSize: 9, color: "#64748b", lineHeight: 1.5 }}>
+                        {workstreamScopes[ws.id]}
+                      </div>
+                    )}
+
+                    {workstreamOwners[ws.id] && (
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                          Owner
+                        </div>
+                        <div style={{ fontSize: 10, color: ws.color, fontWeight: 600 }}>
+                          {workstreamOwners[ws.id]}
+                        </div>
+                      </div>
+                    )}
+
+                    {stats.assignees.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                          On this workstream
+                        </div>
+                        {stats.assignees.map((a) => (
+                          <div key={a} style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ color: OWNER_COLOR[a] ?? ws.color }}>●</span> {a}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div>
+                      <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
+                        Progress
+                      </div>
+                      <div style={{ height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{
+                          height: "100%",
+                          width: `${stats.total ? (stats.doneCount / stats.total) * 100 : 0}%`,
+                          background: ws.color,
+                          borderRadius: 2,
+                          transition: "width 0.3s",
+                        }} />
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: 9, color: "#475569" }}>
+                        {stats.doneCount} of {stats.total} tasks
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                          Completed
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e" }}>
+                          {fmtHours(stats.hoursCompleted)}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                          Remaining
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: ws.color }}>
+                          {fmtHours(stats.hoursRemaining)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Main canvas */}
