@@ -1579,11 +1579,13 @@ def push_to_beads(tasks: list[dict], ws_list: list[dict] | None = None) -> None:
         print("  Initializing BEADS...\n")
         _bd("init", check=True)
 
-    # Build workstream owner lookup: {"WS1": "bryce@company.com", ...}
+    # Build workstream lookup: {"WS1": {"owner": ..., "scope": ...}}
     ws_owners: dict[str, str] = {}
+    ws_scopes: dict[str, str] = {}
     if ws_list:
         for w in ws_list:
             ws_owners[w["id"]] = w.get("owner") or ""
+            ws_scopes[w["id"]] = w.get("scope") or ""
 
     print(f"\n  Creating {len(tasks)} task(s) in BEADS...\n")
 
@@ -1599,6 +1601,7 @@ def push_to_beads(tasks: list[dict], ws_list: list[dict] | None = None) -> None:
         notes = t.get("notes", "—")
         estimate_str = t.get("estimate", "")
         ws_owner = ws_owners.get(ws_id, "")
+        ws_scope = ws_scopes.get(ws_id, "")
 
         desc_parts = [f"Workstream: {ws_raw}"]
         if human != "—":
@@ -1617,6 +1620,8 @@ def push_to_beads(tasks: list[dict], ws_list: list[dict] | None = None) -> None:
             meta["human_required"] = human
         if ws_owner:
             meta["workstream_owner"] = ws_owner
+        if ws_scope:
+            meta["workstream_scope"] = ws_scope
 
         cmd = [
             "create", f"{tid} — {name}",

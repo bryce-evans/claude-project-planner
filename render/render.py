@@ -2,9 +2,9 @@
 """
 Generate a live task flowchart and open it in the browser.
 
-Reads all task data from BEADS (bd list + bd show --json).
-Workstream scope taglines are still read from PLAN.md if present.
-Writes render/src/generated/tasks.ts, then optionally runs the Vite dev server.
+Reads ALL data from BEADS (bd list + bd show --json). No other files are read.
+Task metadata (workstream, workstream_scope, workstream_owner, depends, estimate,
+human_required) must be set on BEADS issues before running render.
 
 Usage (run from your project root):
     python path/to/render.py          # generate + open dev server
@@ -17,51 +17,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).parent.parent
-PLAN_MD = _PROJECT_ROOT / "PLAN.md"
 RENDER_DIR = Path(__file__).parent
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
-
-
-# ---------------------------------------------------------------------------
-# PLAN.md workstream scopes (optional supplement)
-# ---------------------------------------------------------------------------
-
-def load_workstream_meta() -> tuple[dict[str, str], dict[str, str]]:
-    """Return ({WS_ID: scope}, {WS_ID: owner}) parsed from PLAN.md Workstreams table."""
-    import re
-    if not PLAN_MD.exists():
-        return {}, {}
-    content = PLAN_MD.read_text()
-    scopes: dict[str, str] = {}
-    owners: dict[str, str] = {}
-
-    # 5-column: | WS1 | Name | Scope | Owner | Status |
-    for m in re.finditer(
-        r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*\w+\s*\|",
-        content, re.MULTILINE,
-    ):
-        ws_id = m.group(1).strip()
-        scope = m.group(2).strip()
-        owner = m.group(3).strip()
-        if scope and scope.lower() not in ("scope", "---", ""):
-            scopes[ws_id] = scope
-        if owner and owner.lower() not in ("owner", "---", ""):
-            owners[ws_id] = owner
-
-    # 4-column fallback: | WS1 | Name | Scope | Status |
-    if not scopes:
-        for m in re.finditer(
-            r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*\w+\s*\|",
-            content, re.MULTILINE,
-        ):
-            ws_id = m.group(1).strip()
-            scope = m.group(2).strip()
-            if scope and scope.lower() not in ("scope", "---", ""):
-                scopes[ws_id] = scope
-
-    return scopes, owners
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +110,8 @@ def build_tasks(beads_detail: list[dict]) -> list[dict]:
             "beads_id": bd_id,
             "title": bd.get("title") or t_id,
             "workstream": meta.get("workstream") or "",
+            "workstream_scope": meta.get("workstream_scope") or "",
+            "workstream_owner": meta.get("workstream_owner") or "",
             "criticality": criticality,
             "estimate": meta.get("estimate") or "",
             "status": bd.get("status") or "open",
@@ -172,6 +132,28 @@ def build_tasks(beads_detail: list[dict]) -> list[dict]:
         t["unlocks"] = unlocks[t["id"]]
 
     return tasks
+
+
+# ---------------------------------------------------------------------------
+# Derive workstream maps from task metadata
+# ---------------------------------------------------------------------------
+
+def extract_workstream_meta(tasks: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ({WS_ID: scope}, {WS_ID: owner}) derived from task metadata."""
+    scopes: dict[str, str] = {}
+    owners: dict[str, str] = {}
+    for t in tasks:
+        ws_raw = t.get("workstream") or ""
+        ws_id = ws_raw.split("—")[0].strip()
+        if not ws_id:
+            continue
+        scope = t.get("workstream_scope") or ""
+        owner = t.get("workstream_owner") or ""
+        if scope and ws_id not in scopes:
+            scopes[ws_id] = scope
+        if owner and ws_id not in owners:
+            owners[ws_id] = owner
+    return scopes, owners
 
 
 # ---------------------------------------------------------------------------
@@ -277,12 +259,6 @@ def main() -> None:
 
     print("\n  Render — loading task data...\n")
 
-    ws_scopes, ws_owners = load_workstream_meta()
-    if ws_scopes:
-        print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
-    if ws_owners:
-        print(f"  {len(ws_owners)} workstream owner(s) loaded from PLAN.md")
-
     print("  Loading tasks from BEADS (bd list)...")
     beads_list = load_beads_all()
 
@@ -294,6 +270,7 @@ def main() -> None:
     beads_detail = load_beads_detail(beads_list)
 
     tasks = build_tasks(beads_detail)
+    ws_scopes, ws_owners = extract_workstream_meta(tasks)
     print(f"  {len(tasks)} task(s) built\n")
 
     write_data_ts(tasks, ws_scopes, ws_owners)

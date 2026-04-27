@@ -10,12 +10,14 @@ Run from the project root:
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 TASKS_MD = PROJECT_ROOT / "TASKS.md"
+PLAN_MD = PROJECT_ROOT / "PLAN.md"
 BEADS_MAP_FILE = PROJECT_ROOT / ".beads_map.json"
 
 
@@ -81,18 +83,52 @@ def load_tasks_md() -> dict[str, dict]:
 # Main
 # ---------------------------------------------------------------------------
 
+def _load_plan_md() -> tuple[dict[str, str], dict[str, str]]:
+    """Return ({WS_ID: scope}, {WS_ID: owner}) from PLAN.md."""
+    if not PLAN_MD.exists():
+        return {}, {}
+    content = PLAN_MD.read_text()
+    scopes: dict[str, str] = {}
+    owners: dict[str, str] = {}
+    # 5-column: | WS1 | Name | Scope | Owner | Status |
+    for m in re.finditer(
+        r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*\w+\s*\|",
+        content, re.MULTILINE,
+    ):
+        ws_id, scope, owner = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+        if scope and scope.lower() not in ("scope", "---"):
+            scopes[ws_id] = scope
+        if owner and owner.lower() not in ("owner", "---"):
+            owners[ws_id] = owner
+    # 4-column fallback
+    if not scopes:
+        for m in re.finditer(
+            r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|\s*\w+\s*\|",
+            content, re.MULTILINE,
+        ):
+            ws_id, scope = m.group(1).strip(), m.group(2).strip()
+            if scope and scope.lower() not in ("scope", "---"):
+                scopes[ws_id] = scope
+    return scopes, owners
+
+
 def main() -> None:
     if not BEADS_MAP_FILE.exists():
         print("ERROR: .beads_map.json not found. Run plan.py + beads setup first.")
         sys.exit(1)
 
     id_map: dict[str, str] = json.loads(BEADS_MAP_FILE.read_text())
-    inverted = {v: k for k, v in id_map.items()}  # beads_id -> T-id
 
     tasks_md = load_tasks_md()
     if not tasks_md:
         print("ERROR: No tasks found in TASKS.md.")
         sys.exit(1)
+
+    ws_scopes, ws_owners = _load_plan_md()
+    if ws_scopes:
+        print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
+    if ws_owners:
+        print(f"  {len(ws_owners)} workstream owner(s) loaded from PLAN.md")
 
     print(f"\n  Migrating {len(id_map)} tasks to BEADS metadata...\n")
 
@@ -105,12 +141,12 @@ def main() -> None:
         depends_str = ",".join(dep_beads_ids)
 
         workstream_raw = task.get("workstream", "")
-        # Store just the WS-id (e.g. "WS1") — name comes from PLAN.md
         ws_id = workstream_raw.split("—")[0].strip() if workstream_raw else ""
 
         human = task.get("human", "").strip()
-
         estimate = task.get("estimate", "").strip()
+        ws_scope = ws_scopes.get(ws_id, "")
+        ws_owner = ws_owners.get(ws_id, "")
 
         args = [
             "bd", "update", bd_id,
@@ -123,6 +159,10 @@ def main() -> None:
             args += ["--set-metadata", f"human_required={human}"]
         if estimate:
             args += ["--set-metadata", f"estimate={estimate}"]
+        if ws_scope:
+            args += ["--set-metadata", f"workstream_scope={ws_scope}"]
+        if ws_owner:
+            args += ["--set-metadata", f"workstream_owner={ws_owner}"]
 
         rc, out, err = run(args)
         if rc == 0:
