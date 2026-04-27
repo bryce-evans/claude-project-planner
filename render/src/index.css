@@ -23,3 +23,35 @@ body {
 .react-flow__attribution {
   display: none;
 }
+
+.react-flow__controls {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.react-flow__controls-button {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #64748b;
+  fill: #64748b;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  box-shadow: none;
+}
+
+.react-flow__controls-button:hover {
+  background: #273449;
+  color: #94a3b8;
+  fill: #94a3b8;
+}
+
+.react-flow__controls-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

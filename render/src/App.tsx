@@ -934,7 +934,7 @@ export default function App() {
               onPaneClick={() => setSelectedTask(null)}
             >
               <Background color="#1e293b" gap={24} size={1} />
-              <Controls style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
+              <Controls position="bottom-right" style={{ bottom: 168, right: 10 }} />
               <MiniMap
                 style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
                 nodeColor={(node) => STATUS_COLOR[(node.data as Task).status] ?? "#64748b"}
