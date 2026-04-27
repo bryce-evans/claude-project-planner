@@ -20,6 +20,8 @@ from pathlib import Path
 RENDER_DIR = Path(__file__).parent
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
+PUBLIC_DIR = RENDER_DIR / "public"
+JSON_FILE = PUBLIC_DIR / "tasks.json"
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +234,41 @@ def write_data_ts(
     print(f"  Written to {DATA_FILE}")
 
 
+def write_data_json(
+    tasks: list[dict],
+    ws_scopes: dict[str, str] | None = None,
+    ws_owners: dict[str, str] | None = None,
+) -> None:
+    """Write tasks.json to public/ for runtime fetch by the served app."""
+    PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+
+    payload = {
+        "generatedAt": now,
+        "workstreamScopes": ws_scopes or {},
+        "workstreamOwners": ws_owners or {},
+        "tasks": [
+            {
+                "id": t["id"],
+                "beadsId": t["beads_id"],
+                "title": t.get("title"),
+                "workstream": t.get("workstream") or "",
+                "criticality": t.get("criticality", "P1"),
+                "estimate": t.get("estimate", ""),
+                "status": t.get("status", "open"),
+                "depends": t.get("depends") or [],
+                "unlocks": t.get("unlocks") or [],
+                "humanRequired": t.get("human"),
+                "assignee": t.get("assignee"),
+                "events": t.get("events") or [],
+            }
+            for t in tasks
+        ],
+    }
+    JSON_FILE.write_text(json.dumps(payload, indent=2))
+    print(f"  Written to {JSON_FILE}")
+
+
 # ---------------------------------------------------------------------------
 # Dev server
 # ---------------------------------------------------------------------------
@@ -274,6 +311,7 @@ def main() -> None:
     print(f"  {len(tasks)} task(s) built\n")
 
     write_data_ts(tasks, ws_scopes, ws_owners)
+    write_data_json(tasks, ws_scopes, ws_owners)
 
     if data_only:
         print("\n  Done (data only). Open the render app manually.\n")

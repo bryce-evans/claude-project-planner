@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,15 +11,24 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
-import { tasks, generatedAt, workstreamScopes, workstreamOwners } from "./generated/tasks";
 import TaskNode from "./TaskNode";
 import type { Task, TaskStatus } from "./types";
 import { STATUS_COLOR, relativeTime } from "./utils";
 
 const NODE_W = 224;
 const NODE_H = 148;
+const POLL_MS = 30_000;
 
-function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Node[]; edges: Edge[] } {
+interface TaskData {
+  tasks: Task[];
+  generatedAt: string;
+  workstreamScopes: Record<string, string>;
+  workstreamOwners: Record<string, string>;
+}
+
+const EMPTY: TaskData = { tasks: [], generatedAt: "", workstreamScopes: {}, workstreamOwners: {} };
+
+function buildGraph(tasks: Task[], mode: ColorMode, wsColor: Record<string, string>, ownerColor: Record<string, string>): { nodes: Node[]; edges: Edge[] } {
   const g = new Dagre.graphlib.Graph();
   g.setGraph({ rankdir: "LR", nodesep: 48, ranksep: 96, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
@@ -30,7 +39,6 @@ function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Nod
     g.setNode(t.id, { width: NODE_W, height: NODE_H });
   });
 
-  // Edges go from dependency → dependent (direction of work flow)
   tasks.forEach((t) => {
     t.depends.forEach((depId) => {
       if (taskIds.has(depId)) {
@@ -47,7 +55,7 @@ function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Nod
       id: t.id,
       type: "taskNode",
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: { ...t, wsColor: taskColor(t, mode) },
+      data: { ...t, wsColor: getTaskColor(t, mode, wsColor, ownerColor) },
     };
   });
 
@@ -56,14 +64,9 @@ function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Nod
       .filter((depId) => taskIds.has(depId))
       .map((depId) => {
         const sourceTask = tasks.find((x) => x.id === depId);
-        const isActive =
-          t.status === "in_progress" || t.status === "in_review";
+        const isActive = t.status === "in_progress" || t.status === "in_review";
         const isBlocked = t.status === "blocked";
-        const color = isBlocked
-          ? "#ef4444"
-          : isActive
-          ? STATUS_COLOR[t.status]
-          : "#334155";
+        const color = isBlocked ? "#ef4444" : isActive ? STATUS_COLOR[t.status] : "#334155";
         return {
           id: `${depId}→${t.id}`,
           source: depId,
@@ -79,10 +82,6 @@ function buildGraph(tasks: Task[], mode: ColorMode = "workstream"): { nodes: Nod
 }
 
 const nodeTypes: NodeTypes = { taskNode: TaskNode as never };
-
-// ---------------------------------------------------------------------------
-// Estimate parsing
-// ---------------------------------------------------------------------------
 
 function parseHours(est: string): number {
   const s = est.toLowerCase().trim();
@@ -100,114 +99,127 @@ function fmtHours(h: number): string {
 }
 
 const DONE_STATUSES = new Set(["done", "closed"]);
-const ACTIVE_STATUSES = new Set(["in_progress", "in-progress", "in_review", "in-review", "hooked"]);
+const COLOR_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
 
-// ---------------------------------------------------------------------------
-// Per-workstream stats
-// ---------------------------------------------------------------------------
+type ColorMode = "workstream" | "owner";
 
-function wsStats(wsId: string) {
-  const wsTasks = tasks.filter((t) => t.workstream.split("—")[0].trim() === wsId);
-  const done = wsTasks.filter((t) => DONE_STATUSES.has(t.status));
-  const remaining = wsTasks.filter((t) => !DONE_STATUSES.has(t.status));
-  const assignees = Array.from(
-    new Set(wsTasks.map((t) => t.assignee).filter(Boolean) as string[])
-  );
-  return {
-    total: wsTasks.length,
-    doneCount: done.length,
-    hoursCompleted: done.reduce((s: number, t: Task) => s + parseHours(t.estimate), 0),
-    hoursRemaining: remaining.reduce((s: number, t: Task) => s + parseHours(t.estimate), 0),
-    assignees,
-  };
+function getTaskColor(task: Task, mode: ColorMode, wsColor: Record<string, string>, ownerColor: Record<string, string>): string {
+  if (mode === "owner") {
+    return task.assignee ? (ownerColor[task.assignee] ?? "#334155") : "#334155";
+  }
+  const wsId = task.workstream.split("—")[0].trim();
+  return wsColor[wsId] ?? "#334155";
 }
 
-function StatPill({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string | number;
-  color?: string;
-}) {
+function StatPill({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      <span
-        style={{
-          fontSize: 9,
-          color: "#475569",
-          textTransform: "uppercase",
-          letterSpacing: "0.07em",
-        }}
-      >
+      <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
         {label}
       </span>
-      <span style={{ fontSize: 13, fontWeight: 700, color: color ?? "#e2e8f0" }}>
-        {value}
-      </span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: color ?? "#e2e8f0" }}>{value}</span>
     </div>
   );
 }
 
-const COLOR_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
-
-// Derive unique workstreams in order of first appearance
-const WORKSTREAMS: { id: string; full: string; name: string; color: string }[] = Array.from(
-  new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).entries() as Iterable<[string, string]>
-).map(([id, full], i) => ({
-  id,
-  full,
-  name: full.includes("—") ? full.split("—")[1].trim() : full,
-  color: COLOR_PALETTE[i % COLOR_PALETTE.length],
-}));
-
-const WS_COLOR: Record<string, string> = Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color]));
-
-// Derive unique owners and assign colors
-const UNIQUE_OWNERS = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[]));
-const OWNER_COLOR: Record<string, string> = Object.fromEntries(
-  UNIQUE_OWNERS.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]])
-);
-
-type ColorMode = "workstream" | "owner";
-
-function taskColor(task: Task, mode: ColorMode): string {
-  if (mode === "owner") {
-    return task.assignee ? (OWNER_COLOR[task.assignee] ?? "#334155") : "#334155";
-  }
-  const wsId = task.workstream.split("—")[0].trim();
-  return WS_COLOR[wsId] ?? "#334155";
-}
-
 export default function App() {
+  const [data, setData] = useState<TaskData>(EMPTY);
   const [colorMode, setColorMode] = useState<ColorMode>("workstream");
   const [previewMode, setPreviewMode] = useState<ColorMode | null>(null);
   const activeMode = previewMode ?? colorMode;
+  const lastGeneratedAt = useRef("");
+
+  // Derived from tasks
+  const { tasks, generatedAt, workstreamScopes, workstreamOwners } = data;
+
+  const WORKSTREAMS = useMemo(() =>
+    Array.from(
+      new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).entries() as Iterable<[string, string]>
+    ).map(([id, full], i) => ({
+      id,
+      full,
+      name: full.includes("—") ? full.split("—")[1].trim() : full,
+      color: COLOR_PALETTE[i % COLOR_PALETTE.length],
+    })),
+    [tasks]
+  );
+
+  const WS_COLOR = useMemo(() =>
+    Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color])),
+    [WORKSTREAMS]
+  );
+
+  const OWNER_COLOR = useMemo(() => {
+    const owners = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[]));
+    return Object.fromEntries(owners.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]]));
+  }, [tasks]);
+
+  // Fetch and poll
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const res = await fetch("/tasks.json");
+        if (!res.ok) return;
+        const json: TaskData = await res.json();
+        if (json.generatedAt !== lastGeneratedAt.current) {
+          lastGeneratedAt.current = json.generatedAt;
+          setData(json);
+        }
+      } catch {
+        // network error — keep current data
+      }
+    }
+
+    fetchData();
+    const interval = setInterval(fetchData, POLL_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   const { nodes: initNodes, edges: initEdges } = useMemo(
-    () => buildGraph(tasks, colorMode),
+    () => buildGraph(tasks, colorMode, WS_COLOR, OWNER_COLOR),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [tasks]
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
   const [edges, , onEdgesChange] = useEdgesState(initEdges);
+
+  // Sync graph when tasks load
+  useEffect(() => {
+    const { nodes: newNodes, edges: newEdges } = buildGraph(tasks, colorMode, WS_COLOR, OWNER_COLOR);
+    setNodes(newNodes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
   const [hoveredWs, setHoveredWs] = useState<string | null>(null);
   const [expandedWs, setExpandedWs] = useState<string | null>(null);
 
-  // Recolor nodes whenever the active color mode changes
+  // Recolor nodes when color mode changes
   useEffect(() => {
     setNodes((nds) =>
       nds.map((n) => ({
         ...n,
-        data: { ...n.data, wsColor: taskColor(n.data as Task, activeMode) },
+        data: { ...n.data, wsColor: getTaskColor(n.data as Task, activeMode, WS_COLOR, OWNER_COLOR) },
       }))
     );
-  }, [activeMode, setNodes]);
+  }, [activeMode, setNodes, WS_COLOR, OWNER_COLOR]);
+
+  const wsStats = useCallback((wsId: string) => {
+    const wsTasks = tasks.filter((t) => t.workstream.split("—")[0].trim() === wsId);
+    const done = wsTasks.filter((t) => DONE_STATUSES.has(t.status));
+    const remaining = wsTasks.filter((t) => !DONE_STATUSES.has(t.status));
+    const assignees = Array.from(new Set(wsTasks.map((t) => t.assignee).filter(Boolean) as string[]));
+    return {
+      total: wsTasks.length,
+      doneCount: done.length,
+      hoursCompleted: done.reduce((s, t) => s + parseHours(t.estimate), 0),
+      hoursRemaining: remaining.reduce((s, t) => s + parseHours(t.estimate), 0),
+      assignees,
+    };
+  }, [tasks]);
 
   const byStatus = useCallback(
     (s: TaskStatus) => tasks.filter((t) => t.status === s).length,
-    []
+    [tasks]
   );
 
   const done = byStatus("closed") + byStatus("done");
@@ -230,6 +242,14 @@ export default function App() {
     },
     [setNodes]
   );
+
+  if (!tasks.length) {
+    return (
+      <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "#475569", fontSize: 14 }}>Loading tasks…</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex" }}>
@@ -257,7 +277,6 @@ export default function App() {
 
           return (
             <div key={ws.id}>
-              {/* Row */}
               <div
                 onMouseEnter={() => handleWsHover(ws.id)}
                 onMouseLeave={() => handleWsHover(null)}
@@ -289,7 +308,6 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Expanded detail panel */}
               {isExpanded && (
                 <div
                   style={{
@@ -301,14 +319,12 @@ export default function App() {
                     gap: 10,
                   }}
                 >
-                  {/* Scope tagline */}
                   {workstreamScopes[ws.id] && (
                     <div style={{ fontSize: 9, color: "#64748b", lineHeight: 1.5 }}>
                       {workstreamScopes[ws.id]}
                     </div>
                   )}
 
-                  {/* Owner */}
                   {workstreamOwners[ws.id] && (
                     <div>
                       <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
@@ -320,7 +336,6 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Assignees (all task-level assignees) */}
                   {stats.assignees.length > 0 && (
                     <div>
                       <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
@@ -334,7 +349,6 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Progress bar */}
                   <div>
                     <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>
                       Progress
@@ -353,7 +367,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Hours */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
@@ -381,162 +394,135 @@ export default function App() {
 
       {/* Main canvas */}
       <div style={{ flex: 1, position: "relative" }}>
-
-      {/* Top bar */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 10,
-          padding: "10px 20px",
-          background: "rgba(15, 23, 42, 0.88)",
-          borderBottom: "1px solid #1e293b",
-          backdropFilter: "blur(10px)",
-          display: "flex",
-          alignItems: "center",
-          gap: 28,
-        }}
-      >
-        <span style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", letterSpacing: "-0.01em" }}>
-          Project Flow
-        </span>
-
-        <div style={{ width: 1, height: 20, background: "#1e293b" }} />
-
-        <StatPill label="Total" value={tasks.length} />
-        <StatPill label="P0" value={p0} color="#ef4444" />
-        <StatPill
-          label="Done"
-          value={`${done} / ${tasks.length}`}
-          color="#22c55e"
-        />
-        <StatPill label="Active" value={inProgress} color="#3b82f6" />
-        <StatPill label="Blocked" value={blocked} color={blocked > 0 ? "#ef4444" : "#64748b"} />
-        <StatPill label="Human steps" value={humanSteps} color="#f59e0b" />
-
-        {/* Color mode toggle */}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-            Color by
+        {/* Top bar */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 10,
+            padding: "10px 20px",
+            background: "rgba(15, 23, 42, 0.88)",
+            borderBottom: "1px solid #1e293b",
+            backdropFilter: "blur(10px)",
+            display: "flex",
+            alignItems: "center",
+            gap: 28,
+          }}
+        >
+          <span style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", letterSpacing: "-0.01em" }}>
+            Project Flow
           </span>
-          <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
-            {(["workstream", "owner"] as const).map((mode) => (
-              <button
-                key={mode}
-                onMouseEnter={() => setPreviewMode(mode)}
-                onMouseLeave={() => setPreviewMode(null)}
-                onClick={() => setColorMode(mode)}
-                style={{
-                  padding: "3px 10px",
-                  borderRadius: 4,
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  transition: "background 0.12s, color 0.12s",
-                  background: colorMode === mode ? "#334155" : "transparent",
-                  color: colorMode === mode ? "#f1f5f9" : "#64748b",
-                }}
-              >
-                {mode === "workstream" ? "Workstream" : "Owner"}
-              </button>
-            ))}
+
+          <div style={{ width: 1, height: 20, background: "#1e293b" }} />
+
+          <StatPill label="Total" value={tasks.length} />
+          <StatPill label="P0" value={p0} color="#ef4444" />
+          <StatPill label="Done" value={`${done} / ${tasks.length}`} color="#22c55e" />
+          <StatPill label="Active" value={inProgress} color="#3b82f6" />
+          <StatPill label="Blocked" value={blocked} color={blocked > 0 ? "#ef4444" : "#64748b"} />
+          <StatPill label="Human steps" value={humanSteps} color="#f59e0b" />
+
+          {/* Color mode toggle */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+              Color by
+            </span>
+            <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
+              {(["workstream", "owner"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onMouseEnter={() => setPreviewMode(mode)}
+                  onMouseLeave={() => setPreviewMode(null)}
+                  onClick={() => setColorMode(mode)}
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 4,
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    transition: "background 0.12s, color 0.12s",
+                    background: colorMode === mode ? "#334155" : "transparent",
+                    color: colorMode === mode ? "#f1f5f9" : "#64748b",
+                  }}
+                >
+                  {mode === "workstream" ? "Workstream" : "Owner"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {generatedAt && (
+            <span style={{ fontSize: 10, color: "#334155" }}>
+              {relativeTime(generatedAt)}
+            </span>
+          )}
+        </div>
+
+        {/* Legend */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: 16,
+            left: 16,
+            zIndex: 10,
+            background: "rgba(15, 23, 42, 0.88)",
+            border: "1px solid #1e293b",
+            borderRadius: 8,
+            padding: "10px 14px",
+            backdropFilter: "blur(10px)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 5,
+          }}
+        >
+          {(
+            [
+              ["open", "Open"],
+              ["in_progress", "In Progress"],
+              ["in_review", "In Review"],
+              ["blocked", "Blocked"],
+              ["closed", "Done"],
+              ["deferred", "Deferred"],
+            ] as [TaskStatus, string][]
+          ).map(([status, label]) => (
+            <div key={status} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[status] }} />
+              <span style={{ fontSize: 10, color: "#94a3b8" }}>{label}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: "1px solid #1e293b", marginTop: 3, paddingTop: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ fontSize: 10 }}>⚠️</span>
+              <span style={{ fontSize: 10, color: "#94a3b8" }}>Human required</span>
+            </div>
           </div>
         </div>
 
-        {generatedAt && (
-          <span style={{ fontSize: 10, color: "#334155" }}>
-            {relativeTime(generatedAt)}
-          </span>
-        )}
-      </div>
-
-      {/* Legend */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 16,
-          left: 16,
-          zIndex: 10,
-          background: "rgba(15, 23, 42, 0.88)",
-          border: "1px solid #1e293b",
-          borderRadius: 8,
-          padding: "10px 14px",
-          backdropFilter: "blur(10px)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 5,
-        }}
-      >
-        {(
-          [
-            ["open", "Open"],
-            ["in_progress", "In Progress"],
-            ["in_review", "In Review"],
-            ["blocked", "Blocked"],
-            ["closed", "Done"],
-            ["deferred", "Deferred"],
-          ] as [TaskStatus, string][]
-        ).map(([status, label]) => (
-          <div
-            key={status}
-            style={{ display: "flex", alignItems: "center", gap: 7 }}
-          >
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: STATUS_COLOR[status],
-              }}
-            />
-            <span style={{ fontSize: 10, color: "#94a3b8" }}>{label}</span>
-          </div>
-        ))}
-        <div style={{ borderTop: "1px solid #1e293b", marginTop: 3, paddingTop: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ fontSize: 10 }}>⚠️</span>
-            <span style={{ fontSize: 10, color: "#94a3b8" }}>Human required</span>
-          </div>
-        </div>
-      </div>
-
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.15 }}
-        minZoom={0.2}
-        maxZoom={2}
-        style={{ background: "#0f172a", width: "100%", height: "100%" }}
-      >
-        <Background color="#1e293b" gap={24} size={1} />
-        <Controls
-          style={{
-            background: "#1e293b",
-            border: "1px solid #334155",
-            borderRadius: 8,
-          }}
-        />
-        <MiniMap
-          style={{
-            background: "#1e293b",
-            border: "1px solid #334155",
-            borderRadius: 8,
-          }}
-          nodeColor={(node) =>
-            STATUS_COLOR[(node.data as Task).status] ?? "#64748b"
-          }
-          maskColor="rgba(15, 23, 42, 0.7)"
-          zoomable
-          pannable
-        />
-      </ReactFlow>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.15 }}
+          minZoom={0.2}
+          maxZoom={2}
+          style={{ background: "#0f172a", width: "100%", height: "100%" }}
+        >
+          <Background color="#1e293b" gap={24} size={1} />
+          <Controls style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
+          <MiniMap
+            style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
+            nodeColor={(node) => STATUS_COLOR[(node.data as Task).status] ?? "#64748b"}
+            maskColor="rgba(15, 23, 42, 0.7)"
+            zoomable
+            pannable
+          />
+        </ReactFlow>
       </div>
     </div>
   );
