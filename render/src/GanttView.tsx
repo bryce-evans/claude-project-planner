@@ -12,7 +12,7 @@ const HEADER_W = 188;
 const RULER_H = 38;
 const MIN_BAR_W = 36;
 
-type ColorMode = "workstream" | "owner";
+type ColorMode = "workstream" | "owner" | "status";
 
 // ---------------------------------------------------------------------------
 // Topological longest-path: compute start time (hours) per task
@@ -118,6 +118,20 @@ function buildRows(
       color: ownerColor[owner] ?? "#64748b",
       tasks: rowTasks,
     }));
+  }
+
+  if (colorMode === "status") {
+    const STATUS_GROUPS = [
+      { id: "open",        label: "Open",        statuses: new Set(["open", "todo"]),                          color: "#64748b" },
+      { id: "in_progress", label: "In Progress",  statuses: new Set(["in_progress", "in-progress", "hooked"]),  color: "#3b82f6" },
+      { id: "in_review",   label: "In Review",    statuses: new Set(["in_review", "in-review"]),                color: "#f59e0b" },
+      { id: "blocked",     label: "Blocked",      statuses: new Set(["blocked"]),                               color: "#ef4444" },
+      { id: "done",        label: "Done",         statuses: new Set(["closed", "done"]),                        color: "#22c55e" },
+      { id: "deferred",    label: "Deferred",     statuses: new Set(["deferred"]),                              color: "#a855f7" },
+    ];
+    return STATUS_GROUPS
+      .map((g) => ({ ...g, tasks: tasks.filter((t) => g.statuses.has(t.status)) }))
+      .filter((r) => r.tasks.length > 0);
   }
 
   return workstreams

@@ -94,13 +94,25 @@ function fmtHours(h: number): string {
 const DONE_STATUSES = new Set(["done", "closed"]);
 const COLOR_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
 
-type ColorMode = "workstream" | "owner";
+type ColorMode = "workstream" | "owner" | "status";
 type ViewMode = "graph" | "gantt";
 
+const STATUS_GROUPS = [
+  { id: "open",        label: "Open",        statuses: new Set(["open", "todo"]),                           color: "#64748b" },
+  { id: "in_progress", label: "In Progress",  statuses: new Set(["in_progress", "in-progress", "hooked"]),   color: "#3b82f6" },
+  { id: "in_review",   label: "In Review",    statuses: new Set(["in_review", "in-review"]),                 color: "#f59e0b" },
+  { id: "blocked",     label: "Blocked",      statuses: new Set(["blocked"]),                                color: "#ef4444" },
+  { id: "done",        label: "Done",         statuses: new Set(["closed", "done"]),                         color: "#22c55e" },
+  { id: "deferred",    label: "Deferred",     statuses: new Set(["deferred"]),                               color: "#a855f7" },
+];
+
+function statusGroup(task: Task) {
+  return STATUS_GROUPS.find((g) => g.statuses.has(task.status));
+}
+
 function getTaskColor(task: Task, mode: ColorMode, wsColor: Record<string, string>, ownerColor: Record<string, string>): string {
-  if (mode === "owner") {
-    return task.assignee ? (ownerColor[task.assignee] ?? "#334155") : "#334155";
-  }
+  if (mode === "status") return statusGroup(task)?.color ?? "#334155";
+  if (mode === "owner") return task.assignee ? (ownerColor[task.assignee] ?? "#334155") : "#334155";
   const wsId = task.workstream.split("—")[0].trim();
   return wsColor[wsId] ?? "#334155";
 }
@@ -277,6 +289,19 @@ export default function App() {
     [setNodes]
   );
 
+  const handleStatusHover = useCallback(
+    (groupId: string | null) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const task = n.data as Task;
+          const dimmed = groupId !== null && statusGroup(task)?.id !== groupId;
+          return { ...n, data: { ...task, dimmed } };
+        })
+      );
+    },
+    [setNodes]
+  );
+
   if (!tasks.length) {
     return (
       <div style={{ width: "100vw", height: "100vh", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -302,10 +327,39 @@ export default function App() {
         }}
       >
         <div style={{ padding: "10px 14px 6px", fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          {activeMode === "owner" ? "Owners" : "Workstreams"}
+          {activeMode === "owner" ? "Owners" : activeMode === "status" ? "Status" : "Workstreams"}
         </div>
 
-        {activeMode === "owner" ? (
+        {activeMode === "status" ? (
+          /* ── Status list ── */
+          STATUS_GROUPS.filter((g) => tasks.some((t) => g.statuses.has(t.status))).map((g) => {
+            const count = tasks.filter((t) => g.statuses.has(t.status)).length;
+            const pct = tasks.length ? Math.round((count / tasks.length) * 100) : 0;
+            return (
+              <div
+                key={g.id}
+                onMouseEnter={() => handleStatusHover(g.id)}
+                onMouseLeave={() => handleStatusHover(null)}
+                style={{
+                  padding: "9px 14px",
+                  cursor: "default",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 5,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: g.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", flex: 1 }}>{g.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: g.color }}>{count}</span>
+                </div>
+                <div style={{ height: 3, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: g.color, borderRadius: 2 }} />
+                </div>
+              </div>
+            );
+          })
+        ) : activeMode === "owner" ? (
           /* ── Owner list ── */
           OWNERS.map((o) => {
             const isExpanded = expandedOwner === o.id;
@@ -600,7 +654,7 @@ export default function App() {
                 Color by
               </span>
               <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
-                {(["workstream", "owner"] as const).map((mode) => (
+                {(["workstream", "owner", "status"] as const).map((mode) => (
                   <button
                     key={mode}
                     onMouseEnter={() => setPreviewMode(mode)}
@@ -618,7 +672,7 @@ export default function App() {
                       color: colorMode === mode ? "#f1f5f9" : "#64748b",
                     }}
                   >
-                    {mode === "workstream" ? "Workstream" : "Owner"}
+                    {mode === "workstream" ? "Workstream" : mode === "owner" ? "Owner" : "Status"}
                   </button>
                 ))}
               </div>
