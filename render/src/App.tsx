@@ -190,13 +190,14 @@ export default function App() {
   const [expandedWs, setExpandedWs] = useState<string | null>(null);
   const [expandedOwner, setExpandedOwner] = useState<string | null>(null);
 
-  const OWNERS = useMemo(() =>
-    Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[])).map((owner, i) => ({
+  const OWNERS = useMemo(() => {
+    const assigned = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[])).map((owner, i) => ({
       id: owner,
       color: OWNER_COLOR[owner] ?? COLOR_PALETTE[i % COLOR_PALETTE.length],
-    })),
-    [tasks, OWNER_COLOR]
-  );
+    }));
+    const hasUnassigned = tasks.some((t) => !t.assignee);
+    return hasUnassigned ? [...assigned, { id: "(unassigned)", color: "#64748b" }] : assigned;
+  }, [tasks, OWNER_COLOR]);
 
   // Recolor nodes when color mode changes
   useEffect(() => {
@@ -223,7 +224,7 @@ export default function App() {
   }, [tasks]);
 
   const ownerStats = useCallback((owner: string) => {
-    const ownerTasks = tasks.filter((t) => t.assignee === owner);
+    const ownerTasks = tasks.filter((t) => owner === "(unassigned)" ? !t.assignee : t.assignee === owner);
     const done = ownerTasks.filter((t) => DONE_STATUSES.has(t.status));
     const remaining = ownerTasks.filter((t) => !DONE_STATUSES.has(t.status));
     const streams = Array.from(new Set(ownerTasks.map((t) => t.workstream.split("—")[0].trim())));
@@ -267,7 +268,8 @@ export default function App() {
       setNodes((nds) =>
         nds.map((n) => {
           const task = n.data as Task;
-          const dimmed = owner !== null && task.assignee !== owner;
+          const matches = owner === "(unassigned)" ? !task.assignee : task.assignee === owner;
+          const dimmed = owner !== null && !matches;
           return { ...n, data: { ...task, dimmed } };
         })
       );
