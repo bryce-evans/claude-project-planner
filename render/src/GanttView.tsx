@@ -1,18 +1,18 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { Task } from "./types";
+import type { ColorMode, Owner } from "./types";
 import { STATUS_COLOR, parseHours } from "./utils";
+import { STATUS_GROUPS } from "./constants";
 
 const PX_PER_HR = 32;
 const HOURS_PER_DAY = 8;
-const LANE_H = 46;       // height per parallel lane
-const BAR_H = 30;        // actual bar height within a lane
+const LANE_H = 46;
+const BAR_H = 30;
 const BAR_INSET = (LANE_H - BAR_H) / 2;
-const ROW_PAD = 10;      // extra vertical padding per row (above first lane + below last)
+const ROW_PAD = 10;
 const HEADER_W = 188;
 const RULER_H = 38;
 const MIN_BAR_W = 36;
-
-type ColorMode = "workstream" | "owner" | "status";
 
 // ---------------------------------------------------------------------------
 // Topological longest-path: compute start time (hours) per task
@@ -123,14 +123,6 @@ function buildRows(
   }
 
   if (colorMode === "status") {
-    const STATUS_GROUPS = [
-      { id: "open",        label: "Open",        statuses: new Set(["open", "todo"]),                          color: "#64748b" },
-      { id: "in_progress", label: "In Progress",  statuses: new Set(["in_progress", "in-progress", "hooked"]),  color: "#3b82f6" },
-      { id: "in_review",   label: "In Review",    statuses: new Set(["in_review", "in-review"]),                color: "#f59e0b" },
-      { id: "blocked",     label: "Blocked",      statuses: new Set(["blocked"]),                               color: "#ef4444" },
-      { id: "done",        label: "Done",         statuses: new Set(["closed", "done"]),                        color: "#22c55e" },
-      { id: "deferred",    label: "Deferred",     statuses: new Set(["deferred"]),                              color: "#a855f7" },
-    ];
     return STATUS_GROUPS
       .map((g) => ({ ...g, tasks: tasks.filter((t) => g.statuses.has(t.status)) }))
       .filter((r) => r.tasks.length > 0);
@@ -199,7 +191,7 @@ interface GanttViewProps {
   tasks: Task[];
   colorMode: ColorMode;
   workstreams: { id: string; name: string; color: string }[];
-  owners: { id: string; color: string }[];
+  owners: Owner[];
   ownerColor: Record<string, string>;
   workstreamOwners: Record<string, string>;
   onTaskClick?: (task: Task) => void;
@@ -208,8 +200,8 @@ interface GanttViewProps {
 export default function GanttView({ tasks, colorMode, workstreams, owners, ownerColor, onTaskClick }: GanttViewProps) {
   const [tooltip, setTooltip] = useState<{ task: Task; x: number; y: number } | null>(null);
 
-  const layout = computeStartTimes(tasks);
-  const rows = buildRows(tasks, colorMode, workstreams, ownerColor, owners);
+  const layout = useMemo(() => computeStartTimes(tasks), [tasks]);
+  const rows = useMemo(() => buildRows(tasks, colorMode, workstreams, ownerColor, owners), [tasks, colorMode, workstreams, ownerColor, owners]);
 
   const maxEndHr = Math.max(
     0,

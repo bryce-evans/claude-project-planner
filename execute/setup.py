@@ -15,13 +15,8 @@ from pathlib import Path
 
 PLANNER_DIR = Path(__file__).parent.parent
 INIT_DIR = PLANNER_DIR / "init"
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def hr(char: str = "─", width: int = 60) -> str:
-    return char * width
+sys.path.insert(0, str(PLANNER_DIR))
+from planning.ui import hr  # noqa: E402
 
 
 def _run(label: str, cmd: list[str], cwd: Path = Path(".")) -> bool:

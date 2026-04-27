@@ -47,6 +47,13 @@ export function parseHours(est: string): number {
   return 0;
 }
 
+export function fmtHours(h: number): string {
+  if (h === 0) return "—";
+  if (h >= 40 && h % 40 === 0) return `${h / 40}w`;
+  if (h >= 8 && h % 8 === 0) return `${h / 8}d`;
+  return `${h}h`;
+}
+
 export const EVENT_LABEL: Record<string, string> = {
   created: "Created",
   started: "Started",

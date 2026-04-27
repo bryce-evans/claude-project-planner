@@ -1,3 +1,26 @@
+export type ColorMode = "workstream" | "owner" | "status";
+export type ViewMode = "graph" | "gantt";
+
+export interface Workstream {
+  id: string;
+  full: string;
+  name: string;
+  color: string;
+}
+
+export interface Owner {
+  id: string;
+  color: string;
+}
+
+export interface TaskData {
+  tasks: Task[];
+  generatedAt: string;
+  workstreamScopes: Record<string, string>;
+  workstreamOwners: Record<string, string>;
+  team: string[];
+}
+
 export type TaskStatus =
   | "todo"
   | "open"
