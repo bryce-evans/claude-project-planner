@@ -22,6 +22,19 @@ GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
 PUBLIC_DIR = RENDER_DIR / "public"
 JSON_FILE = PUBLIC_DIR / "tasks.json"
+PROJECT_ROOT = RENDER_DIR.parent
+
+
+def load_team() -> list[str]:
+    """Read optional team.json from project root. Returns [] if absent or malformed."""
+    team_file = PROJECT_ROOT / "team.json"
+    if not team_file.exists():
+        return []
+    try:
+        data = json.loads(team_file.read_text())
+        return [str(m) for m in data] if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +175,7 @@ def write_data_ts(
     tasks: list[dict],
     ws_scopes: dict[str, str] | None = None,
     ws_owners: dict[str, str] | None = None,
+    team: list[str] | None = None,
 ) -> None:
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
@@ -187,6 +201,9 @@ def write_data_ts(
         lines.append(f'export const workstreamOwners: Record<string, string> = {{ {owner_entries} }}')
     else:
         lines.append('export const workstreamOwners: Record<string, string> = {}')
+
+    team_entries = ", ".join(f'"{m}"' for m in (team or []))
+    lines.append(f'export const team: string[] = [{team_entries}]')
     lines.append("")
 
     lines.append("export const tasks: Task[] = [")
@@ -216,6 +233,7 @@ def write_data_json(
     tasks: list[dict],
     ws_scopes: dict[str, str] | None = None,
     ws_owners: dict[str, str] | None = None,
+    team: list[str] | None = None,
 ) -> None:
     """Write tasks.json to public/ for runtime fetch by the served app."""
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -225,6 +243,7 @@ def write_data_json(
         "generatedAt": now,
         "workstreamScopes": ws_scopes or {},
         "workstreamOwners": ws_owners or {},
+        "team": team or [],
         "tasks": [
             {
                 "id": t["id"],
@@ -283,10 +302,11 @@ def main() -> None:
 
     tasks = build_tasks(beads_list)
     ws_scopes, ws_owners = extract_workstream_meta(tasks)
-    print(f"  {len(tasks)} task(s) built\n")
+    team = load_team()
+    print(f"  {len(tasks)} task(s) built" + (f", {len(team)} team member(s) from team.json" if team else "") + "\n")
 
-    write_data_ts(tasks, ws_scopes, ws_owners)
-    write_data_json(tasks, ws_scopes, ws_owners)
+    write_data_ts(tasks, ws_scopes, ws_owners, team)
+    write_data_json(tasks, ws_scopes, ws_owners, team)
 
     if data_only:
         print("\n  Done (data only). Open the render app manually.\n")

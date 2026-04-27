@@ -104,9 +104,11 @@ function buildRows(
   colorMode: ColorMode,
   workstreams: { id: string; name: string; color: string }[],
   ownerColor: Record<string, string>,
+  owners: { id: string; color: string }[],
 ): GanttRow[] {
   if (colorMode === "owner") {
-    const ownerMap = new Map<string, Task[]>();
+    // Seed map from full owners list so team members with no tasks still get a row
+    const ownerMap = new Map<string, Task[]>(owners.map((o) => [o.id, []]));
     for (const t of tasks) {
       const key = t.assignee ?? "(unassigned)";
       if (!ownerMap.has(key)) ownerMap.set(key, []);
@@ -197,16 +199,17 @@ interface GanttViewProps {
   tasks: Task[];
   colorMode: ColorMode;
   workstreams: { id: string; name: string; color: string }[];
+  owners: { id: string; color: string }[];
   ownerColor: Record<string, string>;
   workstreamOwners: Record<string, string>;
   onTaskClick?: (task: Task) => void;
 }
 
-export default function GanttView({ tasks, colorMode, workstreams, ownerColor, onTaskClick }: GanttViewProps) {
+export default function GanttView({ tasks, colorMode, workstreams, owners, ownerColor, onTaskClick }: GanttViewProps) {
   const [tooltip, setTooltip] = useState<{ task: Task; x: number; y: number } | null>(null);
 
   const layout = computeStartTimes(tasks);
-  const rows = buildRows(tasks, colorMode, workstreams, ownerColor);
+  const rows = buildRows(tasks, colorMode, workstreams, ownerColor, owners);
 
   const maxEndHr = Math.max(
     0,

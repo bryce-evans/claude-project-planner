@@ -25,9 +25,10 @@ interface TaskData {
   generatedAt: string;
   workstreamScopes: Record<string, string>;
   workstreamOwners: Record<string, string>;
+  team: string[];
 }
 
-const EMPTY: TaskData = { tasks: [], generatedAt: "", workstreamScopes: {}, workstreamOwners: {} };
+const EMPTY: TaskData = { tasks: [], generatedAt: "", workstreamScopes: {}, workstreamOwners: {}, team: [] };
 
 function buildGraph(tasks: Task[], mode: ColorMode, wsColor: Record<string, string>, ownerColor: Record<string, string>): { nodes: Node[]; edges: Edge[] } {
   const g = new Dagre.graphlib.Graph();
@@ -284,7 +285,7 @@ export default function App() {
   const lastGeneratedAt = useRef("");
 
   // Derived from tasks
-  const { tasks, generatedAt, workstreamScopes, workstreamOwners } = data;
+  const { tasks, generatedAt, workstreamScopes, workstreamOwners, team } = data;
 
   const WORKSTREAMS = useMemo(() =>
     Array.from(
@@ -304,9 +305,10 @@ export default function App() {
   );
 
   const OWNER_COLOR = useMemo(() => {
-    const owners = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[]));
-    return Object.fromEntries(owners.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]]));
-  }, [tasks]);
+    const fromTasks = tasks.map((t) => t.assignee).filter(Boolean) as string[];
+    const all = Array.from(new Set([...team, ...fromTasks]));
+    return Object.fromEntries(all.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]]));
+  }, [tasks, team]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -376,13 +378,15 @@ export default function App() {
   const [expandedOwner, setExpandedOwner] = useState<string | null>(null);
 
   const OWNERS = useMemo(() => {
-    const assigned = Array.from(new Set(tasks.map((t) => t.assignee).filter(Boolean) as string[])).map((owner, i) => ({
+    const fromTasks = tasks.map((t) => t.assignee).filter(Boolean) as string[];
+    const all = Array.from(new Set([...team, ...fromTasks]));
+    const assigned = all.map((owner) => ({
       id: owner,
-      color: OWNER_COLOR[owner] ?? COLOR_PALETTE[i % COLOR_PALETTE.length],
+      color: OWNER_COLOR[owner] ?? "#64748b",
     }));
     const hasUnassigned = tasks.some((t) => !t.assignee);
     return hasUnassigned ? [...assigned, { id: "(unassigned)", color: "#64748b" }] : assigned;
-  }, [tasks, OWNER_COLOR]);
+  }, [tasks, team, OWNER_COLOR]);
 
   // Recolor nodes when color mode changes
   useEffect(() => {
@@ -948,6 +952,7 @@ export default function App() {
               tasks={tasks}
               colorMode={activeMode}
               workstreams={WORKSTREAMS}
+              owners={OWNERS}
               ownerColor={OWNER_COLOR}
               workstreamOwners={workstreamOwners}
               onTaskClick={setSelectedTask}
