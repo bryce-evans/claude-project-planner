@@ -181,12 +181,13 @@ export default function App() {
     [tasks]
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(initNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initEdges);
 
   // Sync graph when tasks load
   useEffect(() => {
     const { nodes: newNodes, edges: newEdges } = buildGraph(tasks, colorMode, WS_COLOR, OWNER_COLOR);
     setNodes(newNodes);
+    setEdges(newEdges);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks]);
 
