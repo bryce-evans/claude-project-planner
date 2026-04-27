@@ -27,3 +27,6 @@ Thumbs.db
 .beads_map.json
 render/src/generated/
 render/public/tasks.json
+
+# Render build artifacts (render/ moved to github.com/bryce-evans/beads-render)
+render/
