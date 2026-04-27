@@ -12,8 +12,9 @@ import {
 } from "@xyflow/react";
 import Dagre from "@dagrejs/dagre";
 import TaskNode from "./TaskNode";
+import GanttView from "./GanttView";
 import type { Task, TaskStatus } from "./types";
-import { STATUS_COLOR, relativeTime } from "./utils";
+import { STATUS_COLOR, relativeTime, parseHours } from "./utils";
 
 const NODE_W = 224;
 const NODE_H = 148;
@@ -83,14 +84,6 @@ function buildGraph(tasks: Task[], mode: ColorMode, wsColor: Record<string, stri
 
 const nodeTypes: NodeTypes = { taskNode: TaskNode as never };
 
-function parseHours(est: string): number {
-  const s = est.toLowerCase().trim();
-  if (s.endsWith("w")) return parseFloat(s) * 40;
-  if (s.endsWith("d")) return parseFloat(s) * 8;
-  if (s.endsWith("h")) return parseFloat(s);
-  return 0;
-}
-
 function fmtHours(h: number): string {
   if (h === 0) return "—";
   if (h >= 40 && h % 40 === 0) return `${h / 40}w`;
@@ -102,6 +95,7 @@ const DONE_STATUSES = new Set(["done", "closed"]);
 const COLOR_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
 
 type ColorMode = "workstream" | "owner";
+type ViewMode = "graph" | "gantt";
 
 function getTaskColor(task: Task, mode: ColorMode, wsColor: Record<string, string>, ownerColor: Record<string, string>): string {
   if (mode === "owner") {
@@ -124,6 +118,7 @@ function StatPill({ label, value, color }: { label: string; value: string | numb
 
 export default function App() {
   const [data, setData] = useState<TaskData>(EMPTY);
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
   const [colorMode, setColorMode] = useState<ColorMode>("workstream");
   const [previewMode, setPreviewMode] = useState<ColorMode | null>(null);
   const activeMode = previewMode ?? colorMode;
@@ -425,33 +420,66 @@ export default function App() {
           <StatPill label="Blocked" value={blocked} color={blocked > 0 ? "#ef4444" : "#64748b"} />
           <StatPill label="Human steps" value={humanSteps} color="#f59e0b" />
 
-          {/* Color mode toggle */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-              Color by
-            </span>
-            <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
-              {(["workstream", "owner"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onMouseEnter={() => setPreviewMode(mode)}
-                  onMouseLeave={() => setPreviewMode(null)}
-                  onClick={() => setColorMode(mode)}
-                  style={{
-                    padding: "3px 10px",
-                    borderRadius: 4,
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 10,
-                    fontWeight: 600,
-                    transition: "background 0.12s, color 0.12s",
-                    background: colorMode === mode ? "#334155" : "transparent",
-                    color: colorMode === mode ? "#f1f5f9" : "#64748b",
-                  }}
-                >
-                  {mode === "workstream" ? "Workstream" : "Owner"}
-                </button>
-              ))}
+          {/* Right-side controls */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
+            {/* View toggle */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                View
+              </span>
+              <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
+                {(["graph", "gantt"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setViewMode(v)}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: 4,
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      transition: "background 0.12s, color 0.12s",
+                      background: viewMode === v ? "#334155" : "transparent",
+                      color: viewMode === v ? "#f1f5f9" : "#64748b",
+                    }}
+                  >
+                    {v === "graph" ? "Graph" : "Gantt"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ width: 1, height: 16, background: "#1e293b" }} />
+
+            {/* Color mode toggle */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                Color by
+              </span>
+              <div style={{ display: "flex", gap: 2, background: "#1e293b", borderRadius: 6, padding: 3 }}>
+                {(["workstream", "owner"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onMouseEnter={() => setPreviewMode(mode)}
+                    onMouseLeave={() => setPreviewMode(null)}
+                    onClick={() => setColorMode(mode)}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: 4,
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      transition: "background 0.12s, color 0.12s",
+                      background: colorMode === mode ? "#334155" : "transparent",
+                      color: colorMode === mode ? "#f1f5f9" : "#64748b",
+                    }}
+                  >
+                    {mode === "workstream" ? "Workstream" : "Owner"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -462,68 +490,84 @@ export default function App() {
           )}
         </div>
 
-        {/* Legend */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: 16,
-            left: 16,
-            zIndex: 10,
-            background: "rgba(15, 23, 42, 0.88)",
-            border: "1px solid #1e293b",
-            borderRadius: 8,
-            padding: "10px 14px",
-            backdropFilter: "blur(10px)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 5,
-          }}
-        >
-          {(
-            [
-              ["open", "Open"],
-              ["in_progress", "In Progress"],
-              ["in_review", "In Review"],
-              ["blocked", "Blocked"],
-              ["closed", "Done"],
-              ["deferred", "Deferred"],
-            ] as [TaskStatus, string][]
-          ).map(([status, label]) => (
-            <div key={status} style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[status] }} />
-              <span style={{ fontSize: 10, color: "#94a3b8" }}>{label}</span>
+        {viewMode === "graph" && (
+          <>
+            {/* Legend */}
+            <div
+              style={{
+                position: "absolute",
+                bottom: 16,
+                left: 16,
+                zIndex: 10,
+                background: "rgba(15, 23, 42, 0.88)",
+                border: "1px solid #1e293b",
+                borderRadius: 8,
+                padding: "10px 14px",
+                backdropFilter: "blur(10px)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 5,
+              }}
+            >
+              {(
+                [
+                  ["open", "Open"],
+                  ["in_progress", "In Progress"],
+                  ["in_review", "In Review"],
+                  ["blocked", "Blocked"],
+                  ["closed", "Done"],
+                  ["deferred", "Deferred"],
+                ] as [TaskStatus, string][]
+              ).map(([status, label]) => (
+                <div key={status} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[status] }} />
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>{label}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: "1px solid #1e293b", marginTop: 3, paddingTop: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <span style={{ fontSize: 10 }}>⚠️</span>
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>Human required</span>
+                </div>
+              </div>
             </div>
-          ))}
-          <div style={{ borderTop: "1px solid #1e293b", marginTop: 3, paddingTop: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 10 }}>⚠️</span>
-              <span style={{ fontSize: 10, color: "#94a3b8" }}>Human required</span>
-            </div>
-          </div>
-        </div>
 
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.15 }}
-          minZoom={0.2}
-          maxZoom={2}
-          style={{ background: "#0f172a", width: "100%", height: "100%" }}
-        >
-          <Background color="#1e293b" gap={24} size={1} />
-          <Controls style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-          <MiniMap
-            style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
-            nodeColor={(node) => STATUS_COLOR[(node.data as Task).status] ?? "#64748b"}
-            maskColor="rgba(15, 23, 42, 0.7)"
-            zoomable
-            pannable
-          />
-        </ReactFlow>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.15 }}
+              minZoom={0.2}
+              maxZoom={2}
+              style={{ background: "#0f172a", width: "100%", height: "100%" }}
+            >
+              <Background color="#1e293b" gap={24} size={1} />
+              <Controls style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
+              <MiniMap
+                style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
+                nodeColor={(node) => STATUS_COLOR[(node.data as Task).status] ?? "#64748b"}
+                maskColor="rgba(15, 23, 42, 0.7)"
+                zoomable
+                pannable
+              />
+            </ReactFlow>
+          </>
+        )}
+
+        {viewMode === "gantt" && (
+          <div style={{ position: "absolute", inset: 0, paddingTop: 44, boxSizing: "border-box" }}>
+            <GanttView
+              tasks={tasks}
+              colorMode={activeMode}
+              workstreams={WORKSTREAMS}
+              ownerColor={OWNER_COLOR}
+              workstreamOwners={workstreamOwners}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -39,6 +39,14 @@ export function relativeTime(iso: string): string {
   return "just now";
 }
 
+export function parseHours(est: string): number {
+  const s = (est ?? "").toLowerCase().trim();
+  if (s.endsWith("w")) return parseFloat(s) * 40;
+  if (s.endsWith("d")) return parseFloat(s) * 8;
+  if (s.endsWith("h")) return parseFloat(s);
+  return 0;
+}
+
 export const EVENT_LABEL: Record<string, string> = {
   created: "Created",
   started: "Started",
