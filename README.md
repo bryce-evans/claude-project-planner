@@ -138,8 +138,8 @@ Live browser flowchart of the full task graph. Reads task status exclusively fro
 #### Dev mode
 
 ```sh
-python render/render.py          # generate data + open dev server at localhost:5173
-python render/render.py --data   # generate data file only, no server
+./render/render.py          # generate data + open dev server at localhost:5173
+./render/render.py --data   # generate data file only, no server
 ```
 
 Writes two data files:
@@ -147,6 +147,17 @@ Writes two data files:
 - `render/public/tasks.json` — fetched at runtime by the built app
 
 **First run:** `npm install` runs automatically inside `render/`.
+
+**Task editing in dev mode** requires the Python server running alongside Vite (Vite proxies `POST /task/update` to `:8080`):
+
+```sh
+# Terminal 1
+./render/render.py --data
+python3 render/server.py --port 8080
+
+# Terminal 2
+cd render && npm run dev
+```
 
 #### Production (static server + live updates)
 
