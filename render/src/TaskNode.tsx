@@ -3,12 +3,13 @@ import type { Task } from "./types";
 import { STATUS_COLOR, STATUS_LABEL, EVENT_LABEL, relativeTime } from "./utils";
 
 interface Props {
-  data: Task & { dimmed?: boolean };
+  data: Task & { dimmed?: boolean; wsColor?: string };
   selected: boolean;
 }
 
 export default function TaskNode({ data, selected }: Props) {
   const color = STATUS_COLOR[data.status];
+  const wsColor = data.wsColor ?? "#334155";
   const latestEvent = data.events[data.events.length - 1];
   const wsName = data.workstream.includes("—")
     ? data.workstream.split("—")[1].trim()
@@ -27,9 +28,9 @@ export default function TaskNode({ data, selected }: Props) {
         width: 224,
         background: "#1e293b",
         borderRadius: 8,
-        border: `1.5px solid ${selected ? "#e2e8f0" : color}`,
+        border: `1.5px solid ${selected ? "#e2e8f0" : wsColor}`,
         boxShadow: selected
-          ? `0 0 0 3px ${color}55`
+          ? `0 0 0 3px ${wsColor}55`
           : `0 2px 8px rgba(0,0,0,0.4)`,
         overflow: "hidden",
         fontFamily:
@@ -102,7 +103,7 @@ export default function TaskNode({ data, selected }: Props) {
         </div>
 
         {/* Workstream */}
-        <div style={{ fontSize: 10, color: "#64748b" }}>{wsName}</div>
+        <div style={{ fontSize: 10, color: wsColor, opacity: 0.8 }}>{wsName}</div>
 
         {/* Status row */}
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>

@@ -114,7 +114,7 @@ def main() -> None:
     # Copy render app (task visualiser) — skip node_modules, dist, and generated data
     render_dst = target / "render"
     if RENDER_SRC_DIR.exists() and not render_dst.exists():
-        ignore = shutil.ignore_patterns("node_modules", "dist", "generated")
+        ignore = shutil.ignore_patterns("node_modules", "dist", "tasks.ts")
         shutil.copytree(RENDER_SRC_DIR, render_dst, ignore=ignore)
         print(f"  + render/  (task visualiser)")
     elif render_dst.exists():

@@ -2,7 +2,8 @@
 """
 Generate a live task flowchart and open it in the browser.
 
-Reads live status from BEADS (bd show --json) + task metadata from TASKS.md.
+Reads all task data from BEADS (bd list + bd show --json).
+Workstream scope taglines are still read from PLAN.md if present.
 Writes render/src/generated/tasks.ts, then optionally runs the Vite dev server.
 
 Usage (run from your project root):
@@ -11,133 +12,56 @@ Usage (run from your project root):
 """
 
 import json
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).parent.parent
-TASKS_MD = _PROJECT_ROOT / "TASKS.md"
 PLAN_MD = _PROJECT_ROOT / "PLAN.md"
-
-# Field definitions inlined from planning/task_fields.yaml so render.py has no
-# external dependencies beyond the Python standard library.
-# Each entry: (key, label, default)
-_FIELDS = [
-    ("workstream",  "Workstream",            ""),
-    ("criticality", "Criticality",           "P1"),
-    ("estimate",    "Estimate",              ""),
-    ("status",      "Status",               "todo"),
-    ("depends",     "Depends on",           ""),
-    ("unlocks",     "Unlocks",              ""),
-    ("human",       "Human required",       ""),
-    ("acceptance",  "Acceptance criteria",  ""),
-    ("verification","Verification steps",   ""),
-    ("tricky",      "Verification tricky spots", ""),
-    ("notes",       "Notes",                ""),
-    ("assignee",    "Assignee",             ""),
-]
-
-def _enforce_defaults(task: dict) -> dict:
-    for key, _, default in _FIELDS:
-        if task.get(key) is None:
-            task[key] = default
-    return task
-BEADS_MAP_FILE = _PROJECT_ROOT / ".beads_map.json"
 RENDER_DIR = Path(__file__).parent
 GENERATED_DIR = RENDER_DIR / "src" / "generated"
 DATA_FILE = GENERATED_DIR / "tasks.ts"
 
 
 # ---------------------------------------------------------------------------
-# Parse TASKS.md for static metadata
+# PLAN.md workstream scopes (optional supplement)
 # ---------------------------------------------------------------------------
-
-def _val(block: str, label: str) -> str:
-    """Extract a field value by its label from a task card block."""
-    # Use [ \t]* (not \s*) so we never consume a newline into the next field.
-    # Matches both "**Label:** value" and "> **Label:** value" (human required blockquote).
-    m = re.search(rf"(?:> )?\*\*{re.escape(label)}:\*\*[ \t]*(.+)", block)
-    if m:
-        return m.group(1).strip().rstrip("  ")
-    return "—"
-
-
-def _parse_ids(s: str) -> list[str]:
-    if not s or s == "—":
-        return []
-    return [x.strip() for x in s.split(",") if re.match(r"T\d+", x.strip())]
-
-
-def load_tasks_md() -> list[dict]:
-    if not TASKS_MD.exists():
-        return []
-
-    content = TASKS_MD.read_text()
-    tasks = []
-
-    blocks = re.split(r"(?=^### T\d+)", content, flags=re.MULTILINE)
-    for block in blocks:
-        m = re.match(r"### (T\d+) · (.+)", block.strip())
-        if not m:
-            continue
-        tid, name = m.group(1), m.group(2).strip()
-
-        task: dict = {"id": tid, "title": name}
-
-        for key, label, _ in _FIELDS:
-            raw = _val(block, label)
-            if key in ("depends", "unlocks"):
-                task[key] = _parse_ids(raw)
-            else:
-                task[key] = raw if raw != "—" else None
-
-        tasks.append(_enforce_defaults(task))
-
-    return tasks
-
 
 def load_workstream_scopes() -> dict[str, str]:
     """Return {WS_ID: scope_description} parsed from PLAN.md Workstreams table."""
+    import re
     if not PLAN_MD.exists():
         return {}
-
     content = PLAN_MD.read_text()
     scopes: dict[str, str] = {}
-
-    # Match table rows: | WS1 | Name | Scope text | Status |
     for m in re.finditer(r"^\|\s*(WS\d+)\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|", content, re.MULTILINE):
         ws_id = m.group(1).strip()
         scope = m.group(2).strip()
         if scope and scope.lower() not in ("scope", "---", ""):
             scopes[ws_id] = scope
-
     return scopes
 
 
 # ---------------------------------------------------------------------------
-# Query BEADS for live status + timestamps
+# BEADS
 # ---------------------------------------------------------------------------
 
-def _bd_json(*args: str) -> dict | None:
+def _bd_show(bd_id: str) -> dict | None:
     result = subprocess.run(
-        ["bd", *args, "--json"], capture_output=True, text=True
+        ["bd", "show", bd_id, "--json"], capture_output=True, text=True
     )
     if result.returncode != 0 or not result.stdout.strip():
         return None
     try:
         data = json.loads(result.stdout)
-        # bd show returns a list — unwrap to single dict
-        if isinstance(data, list):
-            return data[0] if data else None
-        return data
+        return data[0] if isinstance(data, list) else data
     except json.JSONDecodeError:
         return None
 
 
 def load_beads_all() -> list[dict]:
-    """Load all tasks from BEADS via bd list --json (primary source)."""
+    """Load all tasks from BEADS (all statuses) via bd list --json."""
     result = subprocess.run(
         ["bd", "list", "--status", "open,in_progress,blocked,closed", "--json"],
         capture_output=True, text=True,
@@ -151,59 +75,13 @@ def load_beads_all() -> list[dict]:
         return []
 
 
-def load_beads_state(id_map: dict[str, str]) -> dict[str, dict]:
-    """Return {T001: beads_data} for all tasks that have a BEADS ID."""
-    state: dict[str, dict] = {}
-    for tid, bd_id in id_map.items():
-        data = _bd_json("show", bd_id)
-        if data:
-            state[tid] = data
-    return state
-
-
-def merge_beads_with_md(
-    beads_tasks: list[dict],
-    inverted_map: dict[str, str],
-    tasks_md: dict[str, dict],
-) -> tuple[list[dict], dict[str, str]]:
-    """Merge bd list output with TASKS.md metadata.
-
-    Returns (merged_task_list, effective_id_map) where effective_id_map
-    maps T-id -> beads_id for the event-timestamp fetch pass.
-    """
-    tasks: list[dict] = []
-    id_map_out: dict[str, str] = {}
-    seen: set[str] = set()
-
-    for bd in beads_tasks:
-        bd_id = bd["id"]
-        t_id = inverted_map.get(bd_id, bd_id)  # fall back to beads_id if unmapped
-
-        if t_id in seen:
-            continue
-        seen.add(t_id)
-
-        md = tasks_md.get(t_id, {})
-
-        priority = bd.get("priority", 1)
-        criticality = md.get("criticality") or (f"P{priority}" if isinstance(priority, int) else str(priority))
-
-        task: dict = {
-            "id": t_id,
-            "title": bd.get("title") or md.get("title") or bd_id,
-            "workstream": md.get("workstream") or "",
-            "criticality": criticality,
-            "estimate": md.get("estimate") or "",
-            "status": bd.get("status") or "open",
-            "depends": md.get("depends") or [],
-            "unlocks": md.get("unlocks") or [],
-            "human": md.get("human") or "",
-            "assignee": bd.get("owner") or md.get("assignee") or None,
-        }
-        tasks.append(task)
-        id_map_out[t_id] = bd_id
-
-    return tasks, id_map_out
+def load_beads_detail(beads_list: list[dict]) -> list[dict]:
+    """Fetch full detail (metadata, timestamps) for each task via bd show."""
+    detailed: list[dict] = []
+    for t in beads_list:
+        detail = _bd_show(t["id"])
+        detailed.append(detail if detail else t)
+    return detailed
 
 
 def _events_from_beads(data: dict) -> list[dict]:
@@ -212,18 +90,71 @@ def _events_from_beads(data: dict) -> list[dict]:
         events.append({"type": "created", "at": data["created_at"]})
     if data.get("started_at"):
         events.append({"type": "started", "at": data["started_at"]})
-    status = data.get("status", "open")
-    if status == "in_review" and data.get("updated_at"):
-        events.append({"type": "in_review", "at": data["updated_at"]})
     if data.get("closed_at"):
         events.append({"type": "closed", "at": data["closed_at"]})
+    status = data.get("status", "open")
     if status == "blocked" and data.get("updated_at"):
         events.append({"type": "blocked", "at": data["updated_at"]})
     return events
 
 
+def build_tasks(beads_detail: list[dict]) -> list[dict]:
+    """Build merged task list from BEADS detail records (metadata-first)."""
+    # First pass: build beads_id -> task_id map from metadata
+    bd_to_tid: dict[str, str] = {}
+    for bd in beads_detail:
+        meta = bd.get("metadata") or {}
+        t_id = meta.get("task_id") or bd["id"]
+        bd_to_tid[bd["id"]] = t_id
+
+    # Second pass: build task dicts
+    tasks: list[dict] = []
+    for bd in beads_detail:
+        meta = bd.get("metadata") or {}
+        bd_id = bd["id"]
+        t_id = bd_to_tid[bd_id]
+
+        # Resolve depends: stored as comma-separated beads IDs -> task_ids
+        raw_depends = meta.get("depends", "")
+        depends: list[str] = []
+        if raw_depends:
+            for dep_bd_id in raw_depends.split(","):
+                dep_bd_id = dep_bd_id.strip()
+                if dep_bd_id in bd_to_tid:
+                    depends.append(bd_to_tid[dep_bd_id])
+
+        priority = bd.get("priority", 1)
+        criticality = f"P{priority}" if isinstance(priority, int) else str(priority)
+
+        tasks.append({
+            "id": t_id,
+            "beads_id": bd_id,
+            "title": bd.get("title") or t_id,
+            "workstream": meta.get("workstream") or "",
+            "criticality": criticality,
+            "estimate": meta.get("estimate") or "",
+            "status": bd.get("status") or "open",
+            "depends": depends,
+            "unlocks": [],  # filled in below
+            "human": meta.get("human_required") or "",
+            "assignee": bd.get("owner") or None,
+            "events": _events_from_beads(bd),
+        })
+
+    # Third pass: compute unlocks (inverse of depends)
+    unlocks: dict[str, list[str]] = {t["id"]: [] for t in tasks}
+    for t in tasks:
+        for dep_tid in t["depends"]:
+            if dep_tid in unlocks:
+                unlocks[dep_tid].append(t["id"])
+    for t in tasks:
+        t["unlocks"] = unlocks[t["id"]]
+
+    return tasks
+
+
 # ---------------------------------------------------------------------------
-# Merge and write tasks.ts
+# Write tasks.ts
 # ---------------------------------------------------------------------------
 
 def _ts_string(v: str | None) -> str:
@@ -240,14 +171,11 @@ def _ts_str_list(lst: list[str]) -> str:
 def _ts_events(events: list[dict]) -> str:
     if not events:
         return "[]"
-    items = [
-        f'{{ type: "{e["type"]}", at: "{e["at"]}" }}'
-        for e in events
-    ]
+    items = [f'{{ type: "{e["type"]}", at: "{e["at"]}" }}' for e in events]
     return "[\n    " + ",\n    ".join(items) + "\n  ]"
 
 
-def write_data_ts(tasks: list[dict], beads_state: dict[str, dict], ws_scopes: dict[str, str] | None = None) -> None:
+def write_data_ts(tasks: list[dict], ws_scopes: dict[str, str] | None = None) -> None:
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -261,11 +189,8 @@ def write_data_ts(tasks: list[dict], beads_state: dict[str, dict], ws_scopes: di
         "",
     ]
 
-    # Emit workstream scope map
     if ws_scopes:
-        scope_entries = ", ".join(
-            f'"{k}": {_ts_string(v)}' for k, v in ws_scopes.items()
-        )
+        scope_entries = ", ".join(f'"{k}": {_ts_string(v)}' for k, v in ws_scopes.items())
         lines.append(f'export const workstreamScopes: Record<string, string> = {{ {scope_entries} }}')
     else:
         lines.append('export const workstreamScopes: Record<string, string> = {}')
@@ -274,33 +199,19 @@ def write_data_ts(tasks: list[dict], beads_state: dict[str, dict], ws_scopes: di
     lines.append("export const tasks: Task[] = [")
 
     for t in tasks:
-        bd = beads_state.get(t["id"], {})
-        # BEADS status takes precedence; fall back to TASKS.md status
-        status = bd.get("status", t.get("status") or "open") if bd else (t.get("status") or "open")
-        assignee = bd.get("assignee") or t.get("assignee") or None
-        events = _events_from_beads(bd) if bd else []
-
-        # Normalise list fields
-        depends = t.get("depends") or []
-        unlocks = t.get("unlocks") or []
-        if isinstance(depends, str):
-            depends = [x.strip() for x in depends.split(",") if x.strip()]
-        if isinstance(unlocks, str):
-            unlocks = [x.strip() for x in unlocks.split(",") if x.strip()]
-
         lines.append("  {")
         lines.append(f'    id: "{t["id"]}",')
-        lines.append(f'    beadsId: "{bd.get("id", "")}",')
-        lines.append(f'    title: {_ts_string(t.get("title") or t.get("name"))},')
+        lines.append(f'    beadsId: "{t["beads_id"]}",')
+        lines.append(f'    title: {_ts_string(t.get("title"))},')
         lines.append(f'    workstream: {_ts_string(t.get("workstream"))},')
         lines.append(f'    criticality: "{t.get("criticality", "P1")}",')
-        lines.append(f'    estimate: "{t.get("estimate", "—")}",')
-        lines.append(f'    status: "{status}",')
-        lines.append(f'    depends: {_ts_str_list(depends)},')
-        lines.append(f'    unlocks: {_ts_str_list(unlocks)},')
+        lines.append(f'    estimate: "{t.get("estimate", "")}",')
+        lines.append(f'    status: "{t.get("status", "open")}",')
+        lines.append(f'    depends: {_ts_str_list(t.get("depends") or [])},')
+        lines.append(f'    unlocks: {_ts_str_list(t.get("unlocks") or [])},')
         lines.append(f'    humanRequired: {_ts_string(t.get("human"))},')
-        lines.append(f'    assignee: {_ts_string(assignee)},')
-        lines.append(f'    events: {_ts_events(events)},')
+        lines.append(f'    assignee: {_ts_string(t.get("assignee"))},')
+        lines.append(f'    events: {_ts_events(t.get("events") or [])},')
         lines.append("  },")
 
     lines += ["]", ""]
@@ -339,38 +250,20 @@ def main() -> None:
     if ws_scopes:
         print(f"  {len(ws_scopes)} workstream scope(s) loaded from PLAN.md")
 
-    beads_state: dict[str, dict] = {}
+    print("  Loading tasks from BEADS (bd list)...")
+    beads_list = load_beads_all()
 
-    if BEADS_MAP_FILE.exists():
-        id_map_file: dict[str, str] = json.loads(BEADS_MAP_FILE.read_text())
-        inverted = {v: k for k, v in id_map_file.items()}
+    if not beads_list:
+        print("  ERROR: bd list returned no tasks. Is BEADS set up for this project?\n")
+        sys.exit(1)
 
-        print("  Loading all tasks from BEADS (bd list)...")
-        beads_all = load_beads_all()
+    print(f"  {len(beads_list)} task(s) found — fetching detail (bd show)...")
+    beads_detail = load_beads_detail(beads_list)
 
-        if beads_all:
-            tasks_md = {t["id"]: t for t in load_tasks_md()}
-            tasks, effective_id_map = merge_beads_with_md(beads_all, inverted, tasks_md)
-            print(f"  {len(tasks)} task(s) from BEADS")
-            print(f"  Fetching detailed event timestamps (bd show)...")
-            beads_state = load_beads_state(effective_id_map)
-            live = sum(1 for v in beads_state.values() if v)
-            print(f"  {live}/{len(tasks)} BEADS task(s) fetched\n")
-        else:
-            print("  bd list returned no tasks — falling back to TASKS.md\n")
-            tasks = load_tasks_md()
-            if not tasks:
-                print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
-                sys.exit(1)
-    else:
-        print("  No .beads_map.json — loading tasks from TASKS.md\n")
-        tasks = load_tasks_md()
-        if not tasks:
-            print(f"  ERROR: No tasks found in {TASKS_MD}. Run plan.py first.\n")
-            sys.exit(1)
-        print(f"  {len(tasks)} task(s) loaded from TASKS.md\n")
+    tasks = build_tasks(beads_detail)
+    print(f"  {len(tasks)} task(s) built\n")
 
-    write_data_ts(tasks, beads_state, ws_scopes)
+    write_data_ts(tasks, ws_scopes)
 
     if data_only:
         print("\n  Done (data only). Open the render app manually.\n")

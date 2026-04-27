@@ -43,11 +43,12 @@ function buildGraph(tasks: Task[]): { nodes: Node[]; edges: Edge[] } {
 
   const nodes: Node[] = tasks.map((t) => {
     const pos = g.node(t.id);
+    const wsId = t.workstream.split("—")[0].trim();
     return {
       id: t.id,
       type: "taskNode",
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      data: t,
+      data: { ...t, wsColor: WS_COLOR[wsId] ?? "#334155" },
     };
   });
 
@@ -116,8 +117,8 @@ function wsStats(wsId: string) {
   return {
     total: wsTasks.length,
     doneCount: done.length,
-    hoursCompleted: done.reduce((s, t) => s + parseHours(t.estimate), 0),
-    hoursRemaining: remaining.reduce((s, t) => s + parseHours(t.estimate), 0),
+    hoursCompleted: done.reduce((s: number, t: Task) => s + parseHours(t.estimate), 0),
+    hoursRemaining: remaining.reduce((s: number, t: Task) => s + parseHours(t.estimate), 0),
     assignees,
   };
 }
@@ -150,19 +151,19 @@ function StatPill({
   );
 }
 
+const WS_PALETTE = ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"];
+
 // Derive unique workstreams in order of first appearance
-const WORKSTREAMS = Array.from(
-  new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).entries()
-).map(([id, full]) => ({
+const WORKSTREAMS: { id: string; full: string; name: string; color: string }[] = Array.from(
+  new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).entries() as Iterable<[string, string]>
+).map(([id, full], i) => ({
   id,
   full,
   name: full.includes("—") ? full.split("—")[1].trim() : full,
-  color: ["#6366f1", "#f59e0b", "#10b981", "#3b82f6", "#a855f7", "#ef4444"][
-    Array.from(new Map(tasks.map((t) => [t.workstream.split("—")[0].trim(), t.workstream])).keys()).indexOf(id) % 6
-  ],
+  color: WS_PALETTE[i % WS_PALETTE.length],
 }));
 
-const WS_COLOR = Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color]));
+const WS_COLOR: Record<string, string> = Object.fromEntries(WORKSTREAMS.map((w) => [w.id, w.color]));
 
 export default function App() {
   const { nodes: initNodes, edges: initEdges } = useMemo(
