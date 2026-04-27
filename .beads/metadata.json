@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "claude_project_planner",
+  "project_id": "3f7ee3e1-ebd3-428a-bcc7-eee13fcfce3c"
+}
