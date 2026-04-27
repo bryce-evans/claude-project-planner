@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect, useRef } from "react";
+import React, { useMemo, useCallback, useState, useEffect, useRef, type CSSProperties } from "react";
 import {
   ReactFlow,
   Background,
@@ -117,6 +117,139 @@ function getTaskColor(task: Task, mode: ColorMode, wsColor: Record<string, strin
   return wsColor[wsId] ?? "#334155";
 }
 
+const CTRL_STYLE: CSSProperties = {
+  width: "100%",
+  background: "#1e293b",
+  border: "1px solid #334155",
+  borderRadius: 4,
+  color: "#94a3b8",
+  fontSize: 10,
+  padding: "3px 6px",
+  outline: "none",
+  fontFamily: "inherit",
+  boxSizing: "border-box",
+};
+
+const STATUS_OPTIONS = [
+  { value: "open",        label: "Open" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "in_review",   label: "In Review" },
+  { value: "blocked",     label: "Blocked" },
+  { value: "closed",      label: "Done" },
+  { value: "deferred",    label: "Deferred" },
+];
+
+function SField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 8, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function SelectionPanel({
+  task,
+  workstreams,
+  assignees,
+  onUpdate,
+}: {
+  task: Task;
+  workstreams: { id: string; full: string }[];
+  assignees: string[];
+  onUpdate: (beadsId: string, field: string, value: string) => void;
+}) {
+  const [estimateInput, setEstimateInput] = useState(task.estimate);
+  useEffect(() => setEstimateInput(task.estimate), [task.estimate]);
+
+  const canonicalStatus = STATUS_OPTIONS.find((o) => {
+    if (task.status === "done" || task.status === "closed") return o.value === "closed";
+    if (task.status === "in-progress") return o.value === "in_progress";
+    if (task.status === "in-review") return o.value === "in_review";
+    return o.value === task.status;
+  })?.value ?? task.status;
+
+  return (
+    <div
+      style={{
+        borderTop: "1px solid #1e293b",
+        padding: "12px 14px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        background: "#0a1120",
+        flexShrink: 0,
+      }}
+    >
+      <div style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        Selection
+      </div>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#f1f5f9" }}>{task.id}</div>
+        {task.title && (
+          <div style={{ fontSize: 9, color: "#64748b", marginTop: 2, lineHeight: 1.4 }}>{task.title}</div>
+        )}
+      </div>
+
+      <SField label="Status">
+        <select
+          value={canonicalStatus}
+          onChange={(e) => onUpdate(task.beadsId, "status", e.target.value)}
+          style={{ ...CTRL_STYLE, cursor: "pointer" }}
+        >
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </SField>
+
+      <SField label="Assignee">
+        <select
+          value={task.assignee ?? ""}
+          onChange={(e) => onUpdate(task.beadsId, "assignee", e.target.value)}
+          style={{ ...CTRL_STYLE, cursor: "pointer" }}
+        >
+          <option value="">(none)</option>
+          {assignees.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </SField>
+
+      <SField label="Estimate">
+        <input
+          value={estimateInput}
+          onChange={(e) => setEstimateInput(e.target.value)}
+          onBlur={() => {
+            if (estimateInput !== task.estimate) {
+              onUpdate(task.beadsId, "estimate", estimateInput);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          placeholder="2h, 1d, 1w"
+          style={CTRL_STYLE}
+        />
+      </SField>
+
+      <SField label="Workstream">
+        <select
+          value={task.workstream}
+          onChange={(e) => onUpdate(task.beadsId, "workstream", e.target.value)}
+          style={{ ...CTRL_STYLE, cursor: "pointer" }}
+        >
+          {workstreams.map((w) => (
+            <option key={w.id} value={w.full}>{w.id}</option>
+          ))}
+        </select>
+      </SField>
+    </div>
+  );
+}
+
 function StatPill({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -161,26 +294,51 @@ export default function App() {
     return Object.fromEntries(owners.map((o, i) => [o, COLOR_PALETTE[i % COLOR_PALETTE.length]]));
   }, [tasks]);
 
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch("/tasks.json");
+      if (!res.ok) return;
+      const json: TaskData = await res.json();
+      if (json.generatedAt !== lastGeneratedAt.current) {
+        lastGeneratedAt.current = json.generatedAt;
+        setData(json);
+      }
+    } catch {
+      // network error — keep current data
+    }
+  }, []);
+
   // Fetch and poll
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch("/tasks.json");
-        if (!res.ok) return;
-        const json: TaskData = await res.json();
-        if (json.generatedAt !== lastGeneratedAt.current) {
-          lastGeneratedAt.current = json.generatedAt;
-          setData(json);
-        }
-      } catch {
-        // network error — keep current data
-      }
-    }
-
     fetchData();
     const interval = setInterval(fetchData, POLL_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
+
+  // Keep selectedTask in sync when tasks reload
+  useEffect(() => {
+    if (selectedTask) {
+      const updated = tasks.find((t) => t.id === selectedTask.id);
+      setSelectedTask(updated ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
+  const updateTask = useCallback(async (beadsId: string, field: string, value: string) => {
+    try {
+      const res = await fetch("/task/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ beadsId, field, value }),
+      });
+      if (res.ok) {
+        lastGeneratedAt.current = "";
+        setTimeout(fetchData, 600);
+      }
+    } catch {
+      // ignore network errors
+    }
+  }, [fetchData]);
 
   const { nodes: initNodes, edges: initEdges } = useMemo(
     () => buildGraph(tasks, colorMode, WS_COLOR, OWNER_COLOR),
@@ -198,6 +356,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks]);
 
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [hoveredWs, setHoveredWs] = useState<string | null>(null);
   const [expandedWs, setExpandedWs] = useState<string | null>(null);
   const [expandedOwner, setExpandedOwner] = useState<string | null>(null);
@@ -321,11 +480,12 @@ export default function App() {
           borderRight: "1px solid #1e293b",
           display: "flex",
           flexDirection: "column",
-          paddingTop: 56,
           zIndex: 20,
-          overflowY: "auto",
+          overflow: "hidden",
         }}
       >
+        {/* Scrollable list section */}
+        <div style={{ flex: 1, overflowY: "auto", paddingTop: 56 }}>
         <div style={{ padding: "10px 14px 6px", fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>
           {activeMode === "owner" ? "Owners" : activeMode === "status" ? "Status" : "Workstreams"}
         </div>
@@ -582,6 +742,16 @@ export default function App() {
             );
           })
         )}
+        </div>{/* end scrollable list */}
+
+        {selectedTask && (
+          <SelectionPanel
+            task={selectedTask}
+            workstreams={WORKSTREAMS.map((w) => ({ id: w.id, full: w.full }))}
+            assignees={OWNERS.filter((o) => o.id !== "(unassigned)").map((o) => o.id)}
+            onUpdate={updateTask}
+          />
+        )}
       </div>
 
       {/* Main canvas */}
@@ -739,6 +909,11 @@ export default function App() {
               minZoom={0.2}
               maxZoom={2}
               style={{ background: "#0f172a", width: "100%", height: "100%" }}
+              onNodeClick={(_e, node) => {
+                const task = tasks.find((t) => t.id === node.id) ?? null;
+                setSelectedTask(task);
+              }}
+              onPaneClick={() => setSelectedTask(null)}
             >
               <Background color="#1e293b" gap={24} size={1} />
               <Controls style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
@@ -761,6 +936,7 @@ export default function App() {
               workstreams={WORKSTREAMS}
               ownerColor={OWNER_COLOR}
               workstreamOwners={workstreamOwners}
+              onTaskClick={setSelectedTask}
             />
           </div>
         )}

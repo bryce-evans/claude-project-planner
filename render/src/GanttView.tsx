@@ -199,9 +199,10 @@ interface GanttViewProps {
   workstreams: { id: string; name: string; color: string }[];
   ownerColor: Record<string, string>;
   workstreamOwners: Record<string, string>;
+  onTaskClick?: (task: Task) => void;
 }
 
-export default function GanttView({ tasks, colorMode, workstreams, ownerColor }: GanttViewProps) {
+export default function GanttView({ tasks, colorMode, workstreams, ownerColor, onTaskClick }: GanttViewProps) {
   const [tooltip, setTooltip] = useState<{ task: Task; x: number; y: number } | null>(null);
 
   const layout = computeStartTimes(tasks);
@@ -353,6 +354,7 @@ export default function GanttView({ tasks, colorMode, workstreams, ownerColor }:
                       onMouseEnter={(e) => setTooltip({ task, x: e.clientX, y: e.clientY })}
                       onMouseMove={(e) => setTooltip({ task, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setTooltip(null)}
+                      onClick={() => onTaskClick?.(task)}
                       style={{
                         position: "absolute",
                         left,
@@ -370,7 +372,7 @@ export default function GanttView({ tasks, colorMode, workstreams, ownerColor }:
                         alignItems: "center",
                         paddingLeft: 7,
                         paddingRight: 5,
-                        cursor: "default",
+                        cursor: "pointer",
                         overflow: "hidden",
                         boxSizing: "border-box",
                         opacity: isDone ? 0.6 : 1,

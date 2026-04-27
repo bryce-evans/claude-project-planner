@@ -111,8 +111,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _json(self, code: int, obj: dict) -> None:
+        self._send(code, json.dumps(obj), "application/json")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_POST(self):
-        if self.path.split("?")[0] != "/webhook":
+        path = self.path.split("?")[0]
+
+        if path == "/task/update":
+            self._handle_task_update()
+            return
+
+        if path != "/webhook":
             self._send(404, "Not found")
             return
 
@@ -134,6 +150,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         threading.Thread(target=_run, daemon=True).start()
         self._send(200, "ok — refresh queued")
+
+    def _handle_task_update(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            req = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self._json(400, {"error": "invalid JSON"})
+            return
+
+        beads_id = req.get("beadsId", "").strip()
+        field = req.get("field", "").strip()
+        value = str(req.get("value", "")).strip()
+
+        if not beads_id or not field:
+            self._json(400, {"error": "beadsId and field required"})
+            return
+
+        ALLOWED = {"status", "assignee", "estimate", "workstream"}
+        if field not in ALLOWED:
+            self._json(400, {"error": f"field must be one of {sorted(ALLOWED)}"})
+            return
+
+        if field == "status":
+            cmd = ["bd", "update", beads_id, "--status", value]
+        elif field == "assignee":
+            cmd = ["bd", "update", beads_id, "--assignee", value]
+        elif field == "estimate":
+            cmd = ["bd", "update", beads_id, "--set-metadata", f"estimate={value}"]
+        else:  # workstream
+            cmd = ["bd", "update", beads_id, "--set-metadata", f"workstream={value}"]
+
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        if r.returncode != 0:
+            print(f"  task update error: {r.stderr.strip()}")
+            self._json(500, {"error": r.stderr.strip() or "bd update failed"})
+            return
+
+        # Regenerate tasks.json synchronously so next GET /tasks.json is fresh
+        subprocess.run(
+            [sys.executable, str(RENDER_DIR / "render.py"), "--data"],
+            capture_output=True, text=True, cwd=PROJECT_ROOT,
+        )
+        print(f"  task update: {beads_id} {field}={value!r}")
+        self._json(200, {"ok": True})
 
 
 def main() -> None:
